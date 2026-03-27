@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "66611254261",
+    "project_id": "marketview-by-clearview",
+    "storage_bucket": "marketview-by-clearview.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:66611254261:android:c63a5116dd98111be346bc",
+        "android_client_info": {
+          "package_name": "com.clearviewdev.marketview"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "66611254261-3v5h9e45881fm4upf30c0dktfv55e80r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBhzmIO26Rlu9zDPsAyW5nknWUnB-hnzbY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "66611254261-3v5h9e45881fm4upf30c0dktfv55e80r.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
