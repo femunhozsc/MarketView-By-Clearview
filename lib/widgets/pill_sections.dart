@@ -84,8 +84,8 @@ class _PillSectionsState extends State<PillSections> {
     final idleBg = isDark ? const Color(0xFF171B22) : const Color(0xFFF4F7FB);
     final idleText = isDark ? AppTheme.whiteSecondary : const Color(0xFF526071);
 
-    final user = context.watch<UserProvider>().user;
-    final isNewUser = user == null || user.categoryClicks.isEmpty;
+    final userProvider = context.watch<UserProvider>();
+    final isNewUser = !userProvider.hasPersonalizedTasteProfile;
     final currentSections = _getSections(isNewUser);
 
     return Container(

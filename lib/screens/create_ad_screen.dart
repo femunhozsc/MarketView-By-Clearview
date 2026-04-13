@@ -30,6 +30,283 @@ class _PropertyCostDraft {
   }
 }
 
+class _ListingFlowOption {
+  const _ListingFlowOption({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.type,
+    required this.defaultCategory,
+  });
+
+  final String id;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final String type;
+  final String defaultCategory;
+}
+
+class _AdSpecFieldConfig {
+  const _AdSpecFieldConfig({
+    required this.id,
+    required this.label,
+    required this.hint,
+    this.keyboardType = TextInputType.text,
+  });
+
+  final String id;
+  final String label;
+  final String hint;
+  final TextInputType keyboardType;
+}
+
+const String _listingFlowAutomotive = 'automotive';
+const String _listingFlowProducts = 'products';
+const String _listingFlowProperties = 'properties';
+const String _listingFlowServices = 'services';
+const String _listingFlowJobs = 'jobs';
+
+const List<_ListingFlowOption> _listingFlowOptions = [
+  _ListingFlowOption(
+    id: _listingFlowAutomotive,
+    title: 'Automóveis, peças e acessórios',
+    subtitle: 'Carros, motos, vans, ônibus, caminhões...',
+    icon: Icons.directions_car_filled_outlined,
+    type: AdModel.productType,
+    defaultCategory: 'Veiculos',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowProducts,
+    title: 'Produtos',
+    subtitle: 'Celulares, roupas, móveis, eletro...',
+    icon: Icons.inventory_2_outlined,
+    type: AdModel.productType,
+    defaultCategory: 'Eletronicos',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowProperties,
+    title: 'Imóveis',
+    subtitle: 'Apartamentos, casas, aluguel de quartos...',
+    icon: Icons.home_work_outlined,
+    type: AdModel.productType,
+    defaultCategory: 'Imoveis',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowServices,
+    title: 'Serviços',
+    subtitle: 'Domésticos, eventos, mudanças, informática...',
+    icon: Icons.handyman_outlined,
+    type: AdModel.serviceType,
+    defaultCategory: 'Outros servicos',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowJobs,
+    title: 'Vaga de emprego',
+    subtitle: 'Atendimento, vendas, administrativo...',
+    icon: Icons.work_outline_rounded,
+    type: AdModel.serviceType,
+    defaultCategory: 'Vaga de emprego',
+  ),
+];
+
+const List<_AdSpecFieldConfig> _genericServiceSpecFields = [
+  _AdSpecFieldConfig(
+    id: 'service_experience',
+    label: 'Tempo de experiência',
+    hint: 'Ex: 4 anos',
+  ),
+  _AdSpecFieldConfig(
+    id: 'service_region',
+    label: 'Região de atendimento',
+    hint: 'Ex: Curitiba e região',
+  ),
+  _AdSpecFieldConfig(
+    id: 'service_schedule',
+    label: 'Disponibilidade',
+    hint: 'Ex: Segunda a sábado, comercial',
+  ),
+];
+
+const Map<String, List<_AdSpecFieldConfig>> _categorySpecFieldOptions = {
+  'Celulares': [
+    _AdSpecFieldConfig(
+      id: 'phone_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: 256 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'phone_ram',
+      label: 'Memória RAM',
+      hint: 'Ex: 8 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'phone_battery_health',
+      label: 'Saúde da bateria',
+      hint: 'Ex: 89%',
+      keyboardType: TextInputType.number,
+    ),
+    _AdSpecFieldConfig(
+      id: 'phone_condition',
+      label: 'Estado do aparelho',
+      hint: 'Ex: Sem marcas, tudo funcionando',
+    ),
+  ],
+  'Notebooks': [
+    _AdSpecFieldConfig(
+      id: 'notebook_processor',
+      label: 'Processador',
+      hint: 'Ex: Intel Core i7 12ª geração',
+    ),
+    _AdSpecFieldConfig(
+      id: 'notebook_ram',
+      label: 'Memória RAM',
+      hint: 'Ex: 16 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'notebook_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: SSD 512 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'notebook_screen',
+      label: 'Tela',
+      hint: 'Ex: 15,6 polegadas Full HD',
+    ),
+  ],
+  'Computadores': [
+    _AdSpecFieldConfig(
+      id: 'pc_processor',
+      label: 'Processador',
+      hint: 'Ex: Ryzen 7 5700X',
+    ),
+    _AdSpecFieldConfig(
+      id: 'pc_ram',
+      label: 'Memória RAM',
+      hint: 'Ex: 32 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'pc_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: SSD 1 TB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'pc_gpu',
+      label: 'Placa de vídeo',
+      hint: 'Ex: RTX 4060',
+    ),
+  ],
+  'Tablets': [
+    _AdSpecFieldConfig(
+      id: 'tablet_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: 128 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'tablet_screen',
+      label: 'Tela',
+      hint: 'Ex: 11 polegadas',
+    ),
+    _AdSpecFieldConfig(
+      id: 'tablet_connectivity',
+      label: 'Conectividade',
+      hint: 'Ex: Wi‑Fi + 5G',
+    ),
+  ],
+  'TVs': [
+    _AdSpecFieldConfig(
+      id: 'tv_size',
+      label: 'Polegadas',
+      hint: 'Ex: 55',
+      keyboardType: TextInputType.number,
+    ),
+    _AdSpecFieldConfig(
+      id: 'tv_resolution',
+      label: 'Resolução',
+      hint: 'Ex: 4K UHD',
+    ),
+    _AdSpecFieldConfig(
+      id: 'tv_panel',
+      label: 'Tipo de painel',
+      hint: 'Ex: QLED, OLED ou LED',
+    ),
+  ],
+  'Videogames': [
+    _AdSpecFieldConfig(
+      id: 'console_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: 1 TB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'console_accessories',
+      label: 'Acompanha o quê?',
+      hint: 'Ex: 2 controles, headset, jogos',
+    ),
+    _AdSpecFieldConfig(
+      id: 'console_condition',
+      label: 'Estado do console',
+      hint: 'Ex: Excelente, pouco usado',
+    ),
+  ],
+  'Roupas': [
+    _AdSpecFieldConfig(
+      id: 'fashion_brand',
+      label: 'Marca',
+      hint: 'Ex: Zara',
+    ),
+    _AdSpecFieldConfig(
+      id: 'fashion_size',
+      label: 'Tamanho',
+      hint: 'Ex: M / 40',
+    ),
+    _AdSpecFieldConfig(
+      id: 'fashion_condition',
+      label: 'Condição',
+      hint: 'Ex: Nova com etiqueta',
+    ),
+  ],
+  'Moveis': [
+    _AdSpecFieldConfig(
+      id: 'furniture_material',
+      label: 'Material',
+      hint: 'Ex: MDF, madeira maciça',
+    ),
+    _AdSpecFieldConfig(
+      id: 'furniture_dimensions',
+      label: 'Dimensões',
+      hint: 'Ex: 1,80 x 0,90 x 0,45 m',
+    ),
+    _AdSpecFieldConfig(
+      id: 'furniture_condition',
+      label: 'Estado',
+      hint: 'Ex: Muito conservado',
+    ),
+  ],
+  'Vaga de emprego': [
+    _AdSpecFieldConfig(
+      id: 'job_contract',
+      label: 'Regime de contratação',
+      hint: 'Ex: CLT, PJ, estágio',
+    ),
+    _AdSpecFieldConfig(
+      id: 'job_schedule',
+      label: 'Jornada',
+      hint: 'Ex: Segunda a sexta, 8h às 18h',
+    ),
+    _AdSpecFieldConfig(
+      id: 'job_mode',
+      label: 'Modalidade',
+      hint: 'Ex: Presencial, híbrido ou remoto',
+    ),
+    _AdSpecFieldConfig(
+      id: 'job_benefits',
+      label: 'Benefícios',
+      hint: 'Ex: VT, VR, comissão, plano de saúde',
+    ),
+  ],
+};
+
 class CreateAdScreen extends StatefulWidget {
   const CreateAdScreen({
     super.key,
@@ -65,9 +342,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   final _propertyBathroomsCtrl = TextEditingController();
   final _propertyParkingCtrl = TextEditingController();
   final _condoFeeCtrl = TextEditingController();
+  final Map<String, TextEditingController> _specControllers = {};
 
   int _currentStep = 0;
   bool _isLoading = false;
+  String _selectedListingFlow = _listingFlowProducts;
   String _selectedType = AdModel.productType;
   String _selectedCategory = productCategories.first;
   String? _selectedCategoryType;
@@ -103,6 +382,20 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       _selectedType == AdModel.productType &&
       AdModel.normalizeValue(_selectedCategory) == 'imoveis';
 
+  bool get _isJobCategory =>
+      !_isBuyRequest &&
+      AdModel.normalizeValue(_selectedCategory) == 'vaga de emprego';
+
+  bool get _showsServicePricingModes =>
+      _needsServicePricingStep && !_isJobCategory;
+
+  _ListingFlowOption get _selectedListingFlowOption {
+    return _listingFlowOptions.firstWhere(
+      (option) => option.id == _selectedListingFlow,
+      orElse: () => _listingFlowOptions[1],
+    );
+  }
+
   List<String> get _availableCategories {
     final base = _selectedType == AdModel.serviceType
         ? serviceCategories
@@ -119,6 +412,25 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       base.add('Outro +');
     }
     return base;
+  }
+
+  List<_AdSpecFieldConfig> get _currentSpecConfigs {
+    if (_isBuyRequest) return const [];
+
+    final explicitType = _selectedCategoryType;
+    if (explicitType != null && explicitType != 'Outro') {
+      final specific = _categorySpecFieldOptions[explicitType];
+      if (specific != null) return specific;
+    }
+
+    final byCategory = _categorySpecFieldOptions[_selectedCategory];
+    if (byCategory != null) return byCategory;
+
+    if (_selectedType == AdModel.serviceType) {
+      return _genericServiceSpecFields;
+    }
+
+    return const [];
   }
 
   bool get _needsPropertyCostsStep =>
@@ -222,6 +534,9 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     _propertyBathroomsCtrl.dispose();
     _propertyParkingCtrl.dispose();
     _condoFeeCtrl.dispose();
+    for (final controller in _specControllers.values) {
+      controller.dispose();
+    }
     for (final draft in _propertyCostDrafts) {
       draft.dispose();
     }
@@ -318,6 +633,82 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   }
 
   String _label(String value) => AdModel.displayLabel(value);
+
+  String _adCreationTypeSubtitle() {
+    if (_isBuyRequest) {
+      return 'Escolha se sua solicitação é para um produto ou um serviço.';
+    }
+    return 'Escolha o formato que melhor representa o anúncio e refine a categoria na próxima etapa.';
+  }
+
+  String _titleHint() {
+    if (_isBuyRequest) {
+      return _selectedType == AdModel.serviceType
+          ? 'Ex: Preciso de diarista 2x por semana'
+          : 'Ex: Procuro notebook para trabalho';
+    }
+
+    switch (_selectedListingFlow) {
+      case _listingFlowAutomotive:
+        return 'Ex: Honda Civic Touring 2020';
+      case _listingFlowProperties:
+        return 'Ex: Apartamento 2 quartos no Centro';
+      case _listingFlowServices:
+        return 'Ex: Serviço de mudança residencial';
+      case _listingFlowJobs:
+        return 'Ex: Vaga para atendente de loja';
+      case _listingFlowProducts:
+      default:
+        return 'Ex: iPhone 14 Pro Max 256GB';
+    }
+  }
+
+  String _descriptionHint() {
+    if (_isBuyRequest) {
+      return 'Explique os detalhes, condições ou requisitos do que você procura.';
+    }
+
+    if (_isJobCategory) {
+      return 'Descreva atividades, requisitos, carga horária, benefícios e diferenciais da vaga.';
+    }
+
+    if (_selectedType == AdModel.serviceType) {
+      return 'Conte como o serviço funciona, o que está incluso e sua disponibilidade.';
+    }
+
+    return 'Conte mais sobre o que está anunciando...';
+  }
+
+  String _pricingStepSubtitle() {
+    if (_isJobCategory) {
+      return 'Informe a faixa salarial ou remuneração oferecida para a vaga.';
+    }
+
+    if (_selectedType == AdModel.serviceType) {
+      return 'Defina como o serviço será cobrado antes de informar os valores.';
+    }
+
+    if (_isPropertyProduct) {
+      return 'Informe se o imóvel está para venda ou aluguel e depois defina o valor.';
+    }
+
+    return 'Informe o valor principal do seu anúncio.';
+  }
+
+  TextEditingController _specControllerFor(String id) {
+    return _specControllers.putIfAbsent(id, TextEditingController.new);
+  }
+
+  List<AdAttribute> _buildCustomAttributes() {
+    return _currentSpecConfigs
+        .map((config) => AdAttribute(
+              key: config.id,
+              label: config.label,
+              value: _specControllerFor(config.id).text.trim(),
+            ))
+        .where((attribute) => attribute.value.isNotEmpty)
+        .toList();
+  }
 
   String _locationLabelFromParts(String city, String state) {
     final trimmedCity = city.trim();
@@ -650,6 +1041,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
             : null,
         propertyFurnishing:
             _isPropertyProduct ? _selectedPropertyFurnishing : null,
+        customAttributes: _buildCustomAttributes(),
         vehicleBrand:
             _needsVehicleDetailsStep ? _vehicleBrandCtrl.text.trim() : null,
         vehicleModel:
@@ -987,25 +1379,45 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           isDark,
         ),
         const SizedBox(height: 8),
-        _subtitle(
-          _isBuyRequest
-              ? 'Escolha se sua solicitação é para um produto ou um serviço.'
-              : 'Escolha a categoria que melhor define seu anúncio.',
-        ),
+        _subtitle(_adCreationTypeSubtitle()),
         const SizedBox(height: 28),
-        _typeOption(
-          AdModel.productType,
-          _isBuyRequest ? 'Produto que preciso' : 'Item/Bem',
-          Icons.inventory_2_outlined,
-          isDark,
-        ),
-        const SizedBox(height: 14),
-        _typeOption(
-          AdModel.serviceType,
-          _isBuyRequest ? 'Serviço que preciso' : 'Serviço',
-          Icons.handyman_outlined,
-          isDark,
-        ),
+        if (_isBuyRequest) ...[
+          _typeOption(
+            AdModel.productType,
+            _isBuyRequest ? 'Produto que preciso' : 'Item/Bem',
+            Icons.inventory_2_outlined,
+            isDark,
+          ),
+          const SizedBox(height: 14),
+          _typeOption(
+            AdModel.serviceType,
+            _isBuyRequest ? 'Serviço que preciso' : 'Serviço',
+            Icons.handyman_outlined,
+            isDark,
+          ),
+        ] else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const spacing = 14.0;
+              final compactWidth = (constraints.maxWidth - spacing) / 2;
+
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: _listingFlowOptions.map((option) {
+                  final isWide = option.id == _listingFlowJobs;
+                  return SizedBox(
+                    width: isWide ? constraints.maxWidth : compactWidth,
+                    child: _listingFlowCard(
+                      option: option,
+                      isDark: isDark,
+                      isWide: isWide,
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
       ],
     );
   }
@@ -1048,6 +1460,102 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     );
   }
 
+  Widget _listingFlowCard({
+    required _ListingFlowOption option,
+    required bool isDark,
+    required bool isWide,
+  }) {
+    final selected = _selectedListingFlow == option.id;
+    final borderColor = selected
+        ? AppTheme.facebookBlue
+        : (isDark ? AppTheme.blackBorder : Colors.grey.shade200);
+    final backgroundColor = selected
+        ? AppTheme.facebookBlue.withValues(alpha: 0.10)
+        : (isDark ? AppTheme.blackLight : Colors.white);
+
+    return InkWell(
+      onTap: () => _handleListingFlowChange(option.id),
+      borderRadius: BorderRadius.circular(20),
+      child: Ink(
+        padding: EdgeInsets.all(isWide ? 18 : 16),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: borderColor, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: selected
+                  ? AppTheme.facebookBlue.withValues(alpha: 0.12)
+                  : Colors.black.withValues(alpha: isDark ? 0.12 : 0.04),
+              blurRadius: selected ? 18 : 10,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: isWide ? 116 : 150),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppTheme.facebookBlue.withValues(alpha: 0.16)
+                          : (isDark
+                              ? Colors.white.withValues(alpha: 0.08)
+                              : Colors.grey.shade100),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      option.icon,
+                      color: selected
+                          ? AppTheme.facebookBlue
+                          : Colors.grey.shade600,
+                      size: 24,
+                    ),
+                  ),
+                  const Spacer(),
+                  AnimatedOpacity(
+                    opacity: selected ? 1 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: const Icon(
+                      Icons.check_circle_rounded,
+                      color: AppTheme.facebookBlue,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                option.title,
+                style: GoogleFonts.roboto(
+                  fontSize: isWide ? 18 : 17,
+                  fontWeight: FontWeight.w800,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                option.subtitle,
+                maxLines: isWide ? 2 : 3,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.roboto(
+                  fontSize: 12.5,
+                  height: 1.35,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _stepInfo(bool isDark) {
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -1060,41 +1568,33 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         _field(
           _titleCtrl,
           _isBuyRequest ? 'Título do pedido' : 'Título',
-          _isBuyRequest
-              ? (_selectedType == AdModel.serviceType
-                  ? 'Ex: Preciso de diarista 2x por semana'
-                  : 'Ex: Procuro notebook para trabalho')
-              : (_selectedType == AdModel.serviceType
-                  ? 'Serviço que você quer anunciar'
-                  : 'Ex: Marca produto e Modelo'),
+          _titleHint(),
           isDark,
         ),
         const SizedBox(height: 18),
         _field(
           _descCtrl,
           _isBuyRequest ? 'O que você precisa?' : 'Descrição',
-          _isBuyRequest
-              ? 'Explique os detalhes, condições ou requisitos do que você procura.'
-              : 'Conte mais sobre o que está anunciando...',
+          _descriptionHint(),
           isDark,
           maxLines: 4,
         ),
         const SizedBox(height: 18),
-        Text(
-          'Categoria',
-          style: GoogleFonts.roboto(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
         _categoryDropdown(isDark),
         if (_availableCategoryTypes.isNotEmpty) ...[
           const SizedBox(height: 18),
           _optionDropdown(
             title: 'Tipo',
             value: _selectedCategoryType,
+            selectedLabel: _customCategoryTypeLabel,
             options: _availableCategoryTypes,
             isDark: isDark,
             onChanged: _handleCategoryTypeChange,
           ),
+        ],
+        if (_currentSpecConfigs.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _dynamicSpecSection(isDark),
         ],
         if (_isPropertyProduct) ...[
           const SizedBox(height: 18),
@@ -1215,6 +1715,39 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     );
   }
 
+  Widget _dynamicSpecSection(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Especificações extras',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Esses detalhes ajudam o anúncio a ficar mais completo e confiável.',
+          style: GoogleFonts.roboto(color: Colors.grey, fontSize: 13),
+        ),
+        const SizedBox(height: 14),
+        ..._currentSpecConfigs.asMap().entries.map((entry) {
+          final config = entry.value;
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: entry.key == _currentSpecConfigs.length - 1 ? 0 : 18,
+            ),
+            child: _field(
+              _specControllerFor(config.id),
+              config.label,
+              config.hint,
+              isDark,
+              keyboardType: config.keyboardType,
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
   Widget _stepPricing(bool isDark) {
     if (_isBuyRequest) {
       return _stepBudget(isDark);
@@ -1225,13 +1758,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       children: [
         _title('Preço do anúncio', isDark),
         const SizedBox(height: 8),
-        _subtitle(
-          _selectedType == AdModel.serviceType
-              ? 'Defina como o serviço será cobrado antes de informar os valores.'
-              : _isPropertyProduct
-                  ? 'Informe se o imóvel está para venda ou aluguel e depois defina o valor.'
-                  : 'Informe o valor principal do seu anúncio.',
-        ),
+        _subtitle(_pricingStepSubtitle()),
         if (_isPropertyProduct) ...[
           const SizedBox(height: 24),
           _selectableChips(
@@ -1279,7 +1806,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
             ),
           ],
         ],
-        if (_selectedType == AdModel.serviceType) ...[
+        if (_showsServicePricingModes) ...[
           const SizedBox(height: 24),
           _selectableChips(
             title: 'Modelo de cobrança',
@@ -1308,7 +1835,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           isDark,
           keyboardType: TextInputType.number,
         ),
-        if (_selectedType == AdModel.serviceType &&
+        if (_showsServicePricingModes &&
             _selectedServicePricing == AdModel.servicePriceFixedPlusHourly) ...[
           const SizedBox(height: 18),
           _field(
@@ -1435,9 +1962,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
                           isDark: isDark,
                           displayLabelBuilder: (value) =>
                               propertyCostPeriodLabels[value] ?? value,
-                          onChanged: (value) => setState(() {
-                            entry.value.period = value;
-                          }),
+                          onChanged: (value) async {
+                            setState(() {
+                              entry.value.period = value;
+                            });
+                          },
                         ),
                       ],
                     ),
@@ -1607,6 +2136,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       propertyParkingSpots: int.tryParse(_propertyParkingCtrl.text.trim()),
       propertyFurnishing:
           _isPropertyProduct ? _selectedPropertyFurnishing : null,
+      customAttributes: _buildCustomAttributes(),
       km: int.tryParse(_kmCtrl.text.replaceAll('.', '')),
       vehicleBrand: _vehicleBrandCtrl.text.trim(),
       vehicleModel: _vehicleModelCtrl.text.trim(),
@@ -1638,7 +2168,9 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           _summaryRow('Subtipo', previewAd.displayCategoryTypeLabel, isDark),
         _summaryRow(
           'Tipo',
-          _selectedType == AdModel.serviceType ? 'Serviço' : 'Item/Bem',
+          _isBuyRequest
+              ? (_selectedType == AdModel.serviceType ? 'Serviço' : 'Item/Bem')
+              : _selectedListingFlowOption.title,
           isDark,
         ),
         _summaryRow(
@@ -1648,7 +2180,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
               : previewAd.displayPriceLabel,
           isDark,
         ),
-        if (!_isBuyRequest && _selectedType == AdModel.serviceType)
+        if (!_isBuyRequest && _showsServicePricingModes)
           _summaryRow(
             'Cobrança',
             previewAd.displayServicePriceTypeLabel,
@@ -1669,6 +2201,10 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
               ),
         if (_needsVehicleDetailsStep)
           ...previewAd.vehicleDetailEntries.map(
+            (entry) => _summaryRow(entry.key, entry.value, isDark),
+          ),
+        if (previewAd.customAttributeEntries.isNotEmpty)
+          ...previewAd.customAttributeEntries.map(
             (entry) => _summaryRow(entry.key, entry.value, isDark),
           ),
         if (_images.isNotEmpty)
@@ -1972,12 +2508,60 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     return normalized;
   }
 
-  void _handleTypeChange(String value) {
+  void _syncListingFlowFromSelection() {
+    if (_isBuyRequest) return;
+
+    final normalizedCategory = AdModel.normalizeValue(_selectedCategory);
+    if (_selectedType == AdModel.serviceType) {
+      _selectedListingFlow = normalizedCategory == 'vaga de emprego'
+          ? _listingFlowJobs
+          : _listingFlowServices;
+      return;
+    }
+
+    if (normalizedCategory == 'veiculos') {
+      _selectedListingFlow = _listingFlowAutomotive;
+      return;
+    }
+    if (normalizedCategory == 'imoveis') {
+      _selectedListingFlow = _listingFlowProperties;
+      return;
+    }
+
+    _selectedListingFlow = _listingFlowProducts;
+  }
+
+  void _handleListingFlowChange(String flowId) {
+    final option = _listingFlowOptions.firstWhere(
+      (entry) => entry.id == flowId,
+      orElse: () => _listingFlowOptions[1],
+    );
+    _handleTypeChange(
+      option.type,
+      preferredCategory: option.defaultCategory,
+      listingFlowId: option.id,
+      forcePreferredCategory: true,
+    );
+  }
+
+  void _handleTypeChange(
+    String value, {
+    String? preferredCategory,
+    String? listingFlowId,
+    bool forcePreferredCategory = false,
+  }) {
     setState(() {
       _selectedType = value;
       final allowedCategories =
           value == AdModel.serviceType ? serviceCategories : productCategories;
-      if (!allowedCategories.contains(_selectedCategory)) {
+      final resolvedPreferredCategory = preferredCategory;
+      final canUsePreferredCategory = resolvedPreferredCategory != null &&
+          allowedCategories.contains(resolvedPreferredCategory);
+      if (canUsePreferredCategory &&
+          (forcePreferredCategory ||
+              !allowedCategories.contains(_selectedCategory))) {
+        _selectedCategory = resolvedPreferredCategory;
+      } else if (!allowedCategories.contains(_selectedCategory)) {
         _selectedCategory = allowedCategories.first;
       }
       _selectedCategoryType = null;
@@ -1999,6 +2583,13 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       }
       if (!_isPropertyProduct) {
         _resetPropertyFields();
+      }
+      if (!_isBuyRequest) {
+        if (listingFlowId != null) {
+          _selectedListingFlow = listingFlowId;
+        } else {
+          _syncListingFlowFromSelection();
+        }
       }
     });
     _normalizeCurrentStep();
@@ -2023,6 +2614,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       if (!_isPropertyProduct) {
         _resetPropertyFields();
       }
+      _syncListingFlowFromSelection();
     });
     _normalizeCurrentStep();
   }
@@ -2101,38 +2693,33 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   }
 
   Widget _categoryDropdown(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _selectedCategory,
-          isExpanded: true,
-          dropdownColor: isDark ? AppTheme.blackCard : Colors.white,
-          items: _availableCategories
-              .map((category) => DropdownMenuItem(
-                    value: category,
-                    child: Text(_label(category)),
-                  ))
-              .toList(),
-          onChanged: (value) {
-            if (value == null) return;
-            _handleCategoryChange(value);
-          },
-        ),
-      ),
+    return _selectionField(
+      title: 'Categoria',
+      valueLabel: _label(_selectedCategory),
+      isDark: isDark,
+      leading: _sheetOptionIcon(_selectedCategory),
+      onTap: () async {
+        final selected = await _showSelectionSheet(
+          title: 'Escolha a categoria',
+          subtitle: 'Selecione a categoria principal do anúncio.',
+          options: _availableCategories,
+          selectedValue: _selectedCategory,
+          isDark: isDark,
+          leadingBuilder: _sheetOptionIcon,
+        );
+        if (selected == null || !mounted) return;
+        _handleCategoryChange(selected);
+      },
     );
   }
 
   Widget _optionDropdown({
     required String title,
     required String? value,
+    String? selectedLabel,
     required List<String> options,
     required bool isDark,
-    required ValueChanged<String> onChanged,
+    required Future<void> Function(String value) onChanged,
     String Function(String value)? displayLabelBuilder,
   }) {
     if (options.isEmpty) return const SizedBox.shrink();
@@ -2141,42 +2728,294 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     final selectedValue = displayValue != null && options.contains(displayValue)
         ? displayValue
         : null;
+    final currentLabel = selectedLabel?.trim().isNotEmpty == true
+        ? selectedLabel!.trim()
+        : selectedValue != null
+            ? displayLabelBuilder?.call(selectedValue) ?? _label(selectedValue)
+            : 'Selecionar';
+
+    return _selectionField(
+      title: title,
+      valueLabel: currentLabel,
+      isDark: isDark,
+      onTap: () async {
+        final nextValue = await _showSelectionSheet(
+          title: 'Escolha $title',
+          subtitle: 'Veja todas as opções e selecione a que combina melhor.',
+          options: options,
+          selectedValue: selectedValue,
+          isDark: isDark,
+          displayLabelBuilder: displayLabelBuilder,
+        );
+        if (nextValue == null || !mounted) return;
+        await onChanged(nextValue);
+      },
+    );
+  }
+
+  Widget _selectionField({
+    required String title,
+    required String valueLabel,
+    required bool isDark,
+    required VoidCallback onTap,
+    Widget? leading,
+  }) {
+    final fillColor = isDark ? AppTheme.blackLight : Colors.grey.shade100;
+    final borderColor = isDark ? AppTheme.blackBorder : Colors.grey.shade200;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(title, style: GoogleFonts.roboto(fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: selectedValue,
-              hint: const Text('Selecionar'),
-              isExpanded: true,
-              dropdownColor: isDark ? AppTheme.blackCard : Colors.white,
-              items: options
-                  .map(
-                    (option) => DropdownMenuItem(
-                      value: option,
-                      child: Text(
-                        displayLabelBuilder?.call(option) ?? _label(option),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(18),
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              decoration: BoxDecoration(
+                color: fillColor,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: borderColor),
+              ),
+              child: Row(
+                children: [
+                  if (leading != null) ...[
+                    leading,
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: Text(
+                      valueLabel,
+                      style: GoogleFonts.roboto(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white : Colors.black87,
                       ),
                     ),
-                  )
-                  .toList(),
-              onChanged: (nextValue) {
-                if (nextValue == null) return;
-                onChanged(nextValue);
-              },
+                  ),
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget? _sheetOptionIcon(String value) {
+    switch (AdModel.normalizeValue(value)) {
+      case 'eletronicos':
+        return _selectionBadge(Icons.devices_rounded);
+      case 'veiculos':
+        return _selectionBadge(Icons.directions_car_rounded);
+      case 'imoveis':
+        return _selectionBadge(Icons.home_work_rounded);
+      case 'moveis':
+        return _selectionBadge(Icons.chair_rounded);
+      case 'roupas':
+        return _selectionBadge(Icons.checkroom_rounded);
+      case 'esportes':
+        return _selectionBadge(Icons.sports_soccer_rounded);
+      case 'animais':
+      case 'servicos pet':
+        return _selectionBadge(Icons.pets_rounded);
+      case 'assistencia tecnica':
+        return _selectionBadge(Icons.build_circle_rounded);
+      case 'aulas e cursos':
+        return _selectionBadge(Icons.school_rounded);
+      case 'beleza e estetica':
+        return _selectionBadge(Icons.content_cut_rounded);
+      case 'consultoria':
+        return _selectionBadge(Icons.support_agent_rounded);
+      case 'design e marketing':
+        return _selectionBadge(Icons.campaign_rounded);
+      case 'eventos':
+        return _selectionBadge(Icons.celebration_rounded);
+      case 'fretes e mudancas':
+        return _selectionBadge(Icons.local_shipping_rounded);
+      case 'limpeza':
+        return _selectionBadge(Icons.cleaning_services_rounded);
+      case 'reformas e manutencao':
+        return _selectionBadge(Icons.handyman_rounded);
+      case 'saude e bem-estar':
+        return _selectionBadge(Icons.health_and_safety_rounded);
+      case 'vaga de emprego':
+        return _selectionBadge(Icons.work_outline_rounded);
+      case 'outros servicos':
+        return _selectionBadge(Icons.miscellaneous_services_rounded);
+      case 'outro +':
+      case 'outro':
+        return _selectionBadge(Icons.add_circle_outline_rounded);
+      default:
+        return null;
+    }
+  }
+
+  Widget _selectionBadge(IconData icon) {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: AppTheme.facebookBlue.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, size: 18, color: AppTheme.facebookBlue),
+    );
+  }
+
+  Future<String?> _showSelectionSheet({
+    required String title,
+    required List<String> options,
+    required bool isDark,
+    String? subtitle,
+    String? selectedValue,
+    String Function(String value)? displayLabelBuilder,
+    Widget? Function(String value)? leadingBuilder,
+  }) {
+    final backgroundColor = isDark ? AppTheme.blackCard : Colors.white;
+    final mutedColor = isDark ? Colors.white70 : Colors.black54;
+
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: backgroundColor,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        final maxHeight = MediaQuery.of(sheetContext).size.height * 0.72;
+
+        return SafeArea(
+          top: false,
+          child: SizedBox(
+            height: maxHeight,
+            child: Column(
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: GoogleFonts.roboto(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                color: isDark ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                            if (subtitle != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                subtitle,
+                                style: GoogleFonts.roboto(color: mutedColor),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final option = options[index];
+                      final selected = option == selectedValue;
+                      final display =
+                          displayLabelBuilder?.call(option) ?? _label(option);
+                      final leading = leadingBuilder?.call(option);
+
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(sheetContext, option),
+                          borderRadius: BorderRadius.circular(18),
+                          child: Ink(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? AppTheme.facebookBlue
+                                      .withValues(alpha: 0.12)
+                                  : (isDark
+                                      ? AppTheme.blackLight
+                                      : Colors.grey.shade100),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: selected
+                                    ? AppTheme.facebookBlue
+                                    : (isDark
+                                        ? AppTheme.blackBorder
+                                        : Colors.grey.shade200),
+                                width: selected ? 1.6 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                if (leading != null) ...[
+                                  leading,
+                                  const SizedBox(width: 12),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    display,
+                                    style: GoogleFonts.roboto(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: isDark
+                                          ? Colors.white
+                                          : Colors.black87,
+                                    ),
+                                  ),
+                                ),
+                                if (selected)
+                                  const Icon(
+                                    Icons.check_circle_rounded,
+                                    color: AppTheme.facebookBlue,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2186,6 +3025,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           ? 'Valor do aluguel (R\$)'
           : 'Valor de venda (R\$)';
     }
+    if (_isJobCategory) return 'Salário / remuneração (R\$)';
     if (_selectedType != AdModel.serviceType) return 'Preço (R\$)';
     if (_selectedServicePricing == AdModel.servicePriceHourly) {
       return 'Valor por hora (R\$)';

@@ -68,6 +68,7 @@ class AdModel {
   final int? propertyBathrooms;
   final int? propertyParkingSpots;
   final String? propertyFurnishing;
+  final List<AdAttribute> customAttributes;
 
   AdModel({
     required this.id,
@@ -115,6 +116,7 @@ class AdModel {
     this.propertyBathrooms,
     this.propertyParkingSpots,
     this.propertyFurnishing,
+    this.customAttributes = const [],
   });
 
   bool get isStoreAd => storeId != null && storeId!.isNotEmpty;
@@ -152,6 +154,7 @@ class AdModel {
           condoFee != null ||
           condoFeeOnRequest ||
           propertyMonthlyCosts.isNotEmpty);
+  bool get hasCustomAttributes => customAttributes.isNotEmpty;
 
   String get displayTypeLabel => type == serviceType ? 'Serviço' : 'Produto';
   String get displayIntentLabel => isWantedAd ? 'Compro' : 'Vendo';
@@ -310,6 +313,34 @@ class AdModel {
     return entries;
   }
 
+  List<MapEntry<String, String>> get customAttributeEntries {
+    return customAttributes
+        .where((attribute) => attribute.value.trim().isNotEmpty)
+        .map((attribute) =>
+            MapEntry(attribute.label.trim(), attribute.value.trim()))
+        .toList();
+  }
+
+  List<String> get cardHighlights {
+    final highlights = <String>[];
+
+    if (displayCategoryTypeLabel.isNotEmpty) {
+      highlights.add(displayCategoryTypeLabel);
+    }
+
+    for (final entry in customAttributeEntries) {
+      final composed = '${entry.key}: ${entry.value}';
+      if (!highlights.contains(composed)) {
+        highlights.add(composed);
+      }
+      if (highlights.length >= 2) break;
+    }
+
+    return highlights;
+  }
+
+  String get cardHighlightLabel => cardHighlights.join(' • ');
+
   static String formatShortPersonName(String value) {
     final parts = value
         .trim()
@@ -433,6 +464,7 @@ class AdModel {
       'propertyBathrooms': propertyBathrooms,
       'propertyParkingSpots': propertyParkingSpots,
       'propertyFurnishing': propertyFurnishing,
+      'customAttributes': customAttributes.map((item) => item.toMap()).toList(),
     };
   }
 
@@ -491,6 +523,10 @@ class AdModel {
       propertyBathrooms: (map['propertyBathrooms'] as num?)?.toInt(),
       propertyParkingSpots: (map['propertyParkingSpots'] as num?)?.toInt(),
       propertyFurnishing: map['propertyFurnishing'],
+      customAttributes: (map['customAttributes'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((item) => AdAttribute.fromMap(Map<String, dynamic>.from(item)))
+          .toList(),
     );
   }
 
@@ -540,6 +576,7 @@ class AdModel {
     int? propertyBathrooms,
     int? propertyParkingSpots,
     String? propertyFurnishing,
+    List<AdAttribute>? customAttributes,
   }) {
     return AdModel(
       id: id ?? this.id,
@@ -588,7 +625,36 @@ class AdModel {
       propertyBathrooms: propertyBathrooms ?? this.propertyBathrooms,
       propertyParkingSpots: propertyParkingSpots ?? this.propertyParkingSpots,
       propertyFurnishing: propertyFurnishing ?? this.propertyFurnishing,
+      customAttributes: customAttributes ?? this.customAttributes,
     );
+  }
+}
+
+class AdAttribute {
+  const AdAttribute({
+    required this.key,
+    required this.label,
+    required this.value,
+  });
+
+  final String key;
+  final String label;
+  final String value;
+
+  factory AdAttribute.fromMap(Map<String, dynamic> map) {
+    return AdAttribute(
+      key: (map['key'] ?? '').toString(),
+      label: (map['label'] ?? '').toString(),
+      value: (map['value'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'key': key,
+      'label': label,
+      'value': value,
+    };
   }
 }
 
@@ -755,6 +821,7 @@ const List<String> serviceCategories = [
   'Reformas e manutencao',
   'Saude e bem-estar',
   'Servicos pet',
+  'Vaga de emprego',
   'Outros servicos',
 ];
 
@@ -941,6 +1008,14 @@ const Map<String, List<String>> categoryTypeOptions = {
     'Hospedagem',
     'Pet sitter',
     'Transporte pet',
+  ],
+  'Vaga de emprego': [
+    'Atendimento',
+    'Vendas',
+    'Administrativo',
+    'Logistica',
+    'Informatica',
+    'Servicos gerais',
   ],
   'Outros servicos': [
     'Digitacao',

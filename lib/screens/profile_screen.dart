@@ -10,7 +10,12 @@ import '../theme/app_theme.dart';
 import 'seller_profile_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({
+    super.key,
+    this.showAppBar = true,
+  });
+
+  final bool showAppBar;
 
   @override
   Widget build(BuildContext context) {
@@ -22,6 +27,7 @@ class ProfileScreen extends StatelessWidget {
       return SellerProfileScreen(
         sellerId: user.uid,
         sellerName: user.fullName,
+        showAppBar: showAppBar,
       );
     }
 

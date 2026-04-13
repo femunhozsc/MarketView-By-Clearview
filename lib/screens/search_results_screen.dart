@@ -4,12 +4,14 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../models/ad_model.dart';
+import '../models/store_model.dart';
 import '../models/user_model.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ad_card.dart';
 import '../widgets/marketplace_controls.dart';
+import '../widgets/store_list_card.dart';
 import 'ad_detail_screen.dart';
 import 'favorites_screen.dart';
 import 'location_picker_screen.dart';
@@ -20,6 +22,7 @@ class SearchResultsScreen extends StatefulWidget {
     super.key,
     required this.initialQuery,
     required this.ads,
+    required this.stores,
     required this.filters,
     required this.locationScope,
     required this.locationRegionKey,
@@ -31,6 +34,7 @@ class SearchResultsScreen extends StatefulWidget {
 
   final String initialQuery;
   final List<AdModel> ads;
+  final List<StoreModel> stores;
   final MarketplaceFilters filters;
   final String locationScope;
   final String locationRegionKey;
@@ -46,6 +50,23 @@ class SearchResultsScreen extends StatefulWidget {
 class _SearchResultsScreenState extends State<SearchResultsScreen> {
   final Distance _distance = const Distance();
   final FirestoreService _firestore = FirestoreService();
+  static const Map<String, List<String>> _searchAliases = {
+    'cel': ['celular', 'celulares', 'smartphone', 'iphone', 'android'],
+    'celular': ['celular', 'celulares', 'smartphone', 'iphone', 'android'],
+    'iphone': ['iphone', 'celular', 'smartphone'],
+    'smartphone': ['smartphone', 'celular', 'celulares'],
+    'notebook': ['notebook', 'notebooks', 'laptop'],
+    'laptop': ['laptop', 'notebook', 'notebooks'],
+    'pc': ['pc', 'computador', 'desktop'],
+    'computador': ['computador', 'desktop', 'pc'],
+    'tv': ['tv', 'televisao', 'smart tv'],
+    'carro': ['carro', 'carros', 'automovel', 'automoveis', 'veiculo'],
+    'moto': ['moto', 'motos', 'motocicleta'],
+    'apartamento': ['apartamento', 'apartamentos', 'ap', 'ape'],
+    'casa': ['casa', 'casas', 'imovel', 'imoveis'],
+    'vaga': ['vaga', 'emprego', 'trabalho'],
+    'emprego': ['emprego', 'vaga', 'trabalho'],
+  };
   late final TextEditingController _searchController;
   late final FocusNode _searchFocusNode;
 
@@ -59,7 +80,12 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   late String _query;
 
   List<UserModel> _userSearchSuggestions = [];
-  bool _isLoadingUserSearch = false;
+  List<StoreModel> _storeSearchSuggestions = [];
+  List<AdModel> _remoteAdResults = [];
+  List<UserModel> _userResults = [];
+  List<StoreModel> _storeResults = [];
+  bool _isLoadingSuggestions = false;
+  bool _isLoadingResults = false;
 
   @override
   void initState() {
@@ -77,6 +103,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
       ..addListener(() {
         if (mounted) setState(() {});
       });
+    _refreshEntityResults();
   }
 
   @override
@@ -96,20 +123,29 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     setState(() {
       if (trimmed.isEmpty) {
         _userSearchSuggestions = [];
-        _isLoadingUserSearch = false;
+        _storeSearchSuggestions = [];
+        _isLoadingSuggestions = false;
       } else {
-        _isLoadingUserSearch = true;
+        _isLoadingSuggestions = true;
       }
     });
 
     if (trimmed.isEmpty) return;
 
-    final suggestions = await _firestore.searchUsersByName(trimmed, limit: 3);
+    final results = await Future.wait([
+      _firestore.searchUsersByName(trimmed, limit: 4),
+      _firestore.searchStoresByName(trimmed, limit: 4),
+    ]);
     if (!mounted || _searchController.text.trim() != trimmed) return;
 
     setState(() {
-      _userSearchSuggestions = suggestions;
-      _isLoadingUserSearch = false;
+      _userSearchSuggestions = results[0] as List<UserModel>;
+      _storeSearchSuggestions = _mergeStoreResults(
+        remoteResults: results[1] as List<StoreModel>,
+        query: trimmed,
+        limit: 4,
+      );
+      _isLoadingSuggestions = false;
     });
   }
 
@@ -121,18 +157,64 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     setState(() {
       _query = trimmed;
       _userSearchSuggestions = [];
-      _isLoadingUserSearch = false;
+      _storeSearchSuggestions = [];
+      _isLoadingSuggestions = false;
       _searchController.value = TextEditingValue(
         text: trimmed,
         selection: TextSelection.collapsed(offset: trimmed.length),
       );
     });
     _searchFocusNode.unfocus();
+    _refreshEntityResults();
   }
 
   List<AdModel> get _baseAds {
+    final byId = <String, AdModel>{};
     final source = widget.ads.isEmpty ? sampleAds : widget.ads;
-    return source.where((ad) => ad.intent == AdModel.intentSell).toList();
+    for (final ad in [..._remoteAdResults, ...source]) {
+      if (ad.id.trim().isNotEmpty) {
+        byId.putIfAbsent(ad.id, () => ad);
+      }
+    }
+    return byId.values
+        .where((ad) => ad.intent == AdModel.intentSell)
+        .toList(growable: false);
+  }
+
+  List<StoreModel> get _baseStores =>
+      widget.stores.where((store) => store.isActive).toList(growable: false);
+
+  Future<void> _refreshEntityResults() async {
+    final trimmed = _query.trim();
+    if (trimmed.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _remoteAdResults = [];
+        _userResults = [];
+        _storeResults = [];
+        _isLoadingResults = false;
+      });
+      return;
+    }
+
+    setState(() => _isLoadingResults = true);
+    final results = await Future.wait([
+      _firestore.searchAds(trimmed, limit: 80),
+      _firestore.searchUsersByName(trimmed, limit: 8),
+      _firestore.searchStoresByName(trimmed, limit: 8),
+    ]);
+    if (!mounted || _query.trim() != trimmed) return;
+
+    setState(() {
+      _remoteAdResults = results[0] as List<AdModel>;
+      _userResults = results[1] as List<UserModel>;
+      _storeResults = _mergeStoreResults(
+        remoteResults: results[2] as List<StoreModel>,
+        query: trimmed,
+        limit: 8,
+      );
+      _isLoadingResults = false;
+    });
   }
 
   List<String> _searchTextSuggestions(List<String> recentSearches) {
@@ -223,7 +305,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
       children: [
-        if (_isLoadingUserSearch)
+        if (_isLoadingSuggestions)
           const Padding(
             padding: EdgeInsets.only(bottom: 12),
             child: LinearProgressIndicator(
@@ -262,6 +344,80 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
             onTap: () => _submitSearch(suggestion),
           ),
         ),
+        if (_storeSearchSuggestions.isNotEmpty) const SizedBox(height: 10),
+        if (_storeSearchSuggestions.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Lojas',
+              style: GoogleFonts.roboto(
+                color: Colors.grey,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          ..._storeSearchSuggestions.map(
+            (store) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: borderColor),
+                ),
+                tileColor: cardColor,
+                leading: CircleAvatar(
+                  backgroundColor:
+                      AppTheme.facebookBlue.withValues(alpha: 0.12),
+                  backgroundImage: store.logo != null &&
+                          store.logo!.trim().isNotEmpty
+                      ? NetworkImage(store.logo!)
+                      : null,
+                  child: store.logo == null || store.logo!.trim().isEmpty
+                      ? const Icon(
+                          Icons.storefront_rounded,
+                          color: AppTheme.facebookBlue,
+                        )
+                      : null,
+                ),
+                title: Text(
+                  store.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.roboto(
+                    color: textColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  store.address.city.isNotEmpty
+                      ? '${AdModel.displayLabel(store.category)} · ${store.address.city}, ${store.address.state}'
+                      : AdModel.displayLabel(store.category),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.roboto(
+                    color: Colors.grey,
+                    fontSize: 12.5,
+                  ),
+                ),
+                onTap: () {
+                  _searchFocusNode.unfocus();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SellerProfileScreen(
+                        sellerId: store.ownerId,
+                        sellerName: store.name,
+                        storeId: store.id,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
         if (_userSearchSuggestions.isNotEmpty) const SizedBox(height: 10),
         if (_userSearchSuggestions.isNotEmpty) ...[
           Padding(
@@ -341,18 +497,315 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     );
   }
 
-  List<AdModel> get _titleMatches {
-    final normalizedQuery = AdModel.normalizeValue(_query);
-    if (normalizedQuery.isEmpty) return const [];
+  List<String> _expandedQueryTerms(String rawQuery) {
+    final baseTerms = AdModel.normalizeValue(rawQuery)
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((term) => term.isNotEmpty)
+        .toList();
+    final expanded = <String>{...baseTerms};
+    for (final term in baseTerms) {
+      expanded.addAll(_searchAliases[term] ?? const []);
+    }
+    return expanded
+        .map(AdModel.normalizeValue)
+        .where((term) => term.isNotEmpty)
+        .toList(growable: false);
+  }
 
-    final matches = _baseAds.where((ad) {
-      final normalizedTitle = AdModel.normalizeValue(ad.title);
-      return normalizedTitle.contains(normalizedQuery);
-    }).toList();
+  bool _containsAllTerms(String field, List<String> terms) {
+    if (field.isEmpty || terms.isEmpty) return false;
+    return terms.every((term) => field.contains(term));
+  }
 
-    return _sortAds(
-      matches.where(_matchesSelectedLocation).where(_matchesFilters).toList(),
+  int _scoreTextField(
+    String field, {
+    required String normalizedQuery,
+    required List<String> terms,
+    int exact = 0,
+    int startsWith = 0,
+    int contains = 0,
+    int perTerm = 0,
+    int allTermsBonus = 0,
+  }) {
+    if (field.isEmpty || normalizedQuery.isEmpty) return 0;
+
+    var score = 0;
+    if (field == normalizedQuery) score += exact;
+    if (field.startsWith(normalizedQuery)) score += startsWith;
+    if (field.contains(normalizedQuery)) score += contains;
+    if (_containsAllTerms(field, terms)) score += allTermsBonus;
+
+    for (final term in terms) {
+      if (field.contains(term)) {
+        score += perTerm;
+      }
+    }
+    return score;
+  }
+
+  int _scoreAdSearch(AdModel ad) {
+    final normalizedQuery = AdModel.normalizeValue(_query).trim();
+    if (normalizedQuery.isEmpty) return 0;
+    if (!_matchesSelectedLocation(ad) || !_matchesFilters(ad)) return 0;
+
+    final terms = _expandedQueryTerms(_query);
+    final title = AdModel.normalizeValue(ad.title);
+    final category = AdModel.normalizeValue(ad.category);
+    final categoryType = AdModel.normalizeValue(ad.displayCategoryTypeLabel);
+    final description = AdModel.normalizeValue(ad.description);
+    final sellerName = AdModel.normalizeValue(ad.displaySellerName);
+    final storeName = AdModel.normalizeValue(ad.storeName ?? '');
+    final location = AdModel.normalizeValue(ad.location);
+
+    var score = 0;
+    score += _scoreTextField(
+      title,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      exact: 260,
+      startsWith: 170,
+      contains: 120,
+      perTerm: 26,
+      allTermsBonus: 90,
     );
+    score += _scoreTextField(
+      category,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      exact: 92,
+      startsWith: 66,
+      contains: 52,
+      perTerm: 16,
+      allTermsBonus: 18,
+    );
+    score += _scoreTextField(
+      categoryType,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      exact: 82,
+      startsWith: 58,
+      contains: 48,
+      perTerm: 15,
+      allTermsBonus: 16,
+    );
+    score += _scoreTextField(
+      description,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      contains: 30,
+      perTerm: 8,
+      allTermsBonus: 10,
+    );
+    score += _scoreTextField(
+      sellerName,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      contains: 28,
+      perTerm: 7,
+    );
+    score += _scoreTextField(
+      storeName,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      contains: 30,
+      perTerm: 8,
+    );
+    score += _scoreTextField(
+      location,
+      normalizedQuery: normalizedQuery,
+      terms: terms,
+      contains: 14,
+      perTerm: 3,
+    );
+
+    for (final attribute in ad.customAttributes) {
+      final label = AdModel.normalizeValue(attribute.label);
+      final value = AdModel.normalizeValue(attribute.value);
+      score += _scoreTextField(
+        label,
+        normalizedQuery: normalizedQuery,
+        terms: terms,
+        contains: 10,
+        perTerm: 4,
+      );
+      score += _scoreTextField(
+        value,
+        normalizedQuery: normalizedQuery,
+        terms: terms,
+        contains: 12,
+        perTerm: 5,
+      );
+    }
+
+    return score;
+  }
+
+  int _scoreStoreSearch(StoreModel store, String rawQuery) {
+    final normalizedQuery = AdModel.normalizeValue(rawQuery).trim();
+    if (normalizedQuery.isEmpty || !store.isActive) return 0;
+
+    final terms = _expandedQueryTerms(rawQuery);
+    final name = AdModel.normalizeValue(store.name);
+    final category = AdModel.normalizeValue(store.category);
+    final description = AdModel.normalizeValue(store.description);
+    final ownerName = AdModel.normalizeValue(store.ownerName);
+    final username = AdModel.normalizeValue(store.accessUsername);
+    final city = AdModel.normalizeValue(store.address.city);
+    final state = AdModel.normalizeValue(store.address.state);
+
+    return _scoreTextField(
+          name,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          exact: 240,
+          startsWith: 180,
+          contains: 120,
+          perTerm: 26,
+          allTermsBonus: 70,
+        ) +
+        _scoreTextField(
+          category,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          contains: 54,
+          perTerm: 16,
+        ) +
+        _scoreTextField(
+          description,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          contains: 24,
+          perTerm: 8,
+        ) +
+        _scoreTextField(
+          ownerName,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          contains: 28,
+          perTerm: 8,
+        ) +
+        _scoreTextField(
+          username,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          startsWith: 84,
+          contains: 44,
+          perTerm: 12,
+        ) +
+        _scoreTextField(
+          '$city $state',
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          contains: 18,
+          perTerm: 5,
+        );
+  }
+
+  int _scoreUserSearch(UserModel user, String rawQuery) {
+    final normalizedQuery = AdModel.normalizeValue(rawQuery).trim();
+    if (normalizedQuery.isEmpty) return 0;
+
+    final terms = _expandedQueryTerms(rawQuery);
+    final fullName = AdModel.normalizeValue(user.fullName);
+    final firstName = AdModel.normalizeValue(user.firstName);
+    final lastName = AdModel.normalizeValue(user.lastName);
+    final city = AdModel.normalizeValue(user.address.city);
+    final state = AdModel.normalizeValue(user.address.state);
+
+    return _scoreTextField(
+          fullName,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          exact: 220,
+          startsWith: 160,
+          contains: 98,
+          perTerm: 24,
+          allTermsBonus: 56,
+        ) +
+        _scoreTextField(
+          firstName,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          exact: 110,
+          startsWith: 80,
+          contains: 46,
+          perTerm: 12,
+        ) +
+        _scoreTextField(
+          lastName,
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          startsWith: 54,
+          contains: 30,
+          perTerm: 8,
+        ) +
+        _scoreTextField(
+          '$city $state',
+          normalizedQuery: normalizedQuery,
+          terms: terms,
+          contains: 16,
+          perTerm: 4,
+        );
+  }
+
+  List<StoreModel> _mergeStoreResults({
+    required List<StoreModel> remoteResults,
+    required String query,
+    int limit = 8,
+  }) {
+    final byId = <String, StoreModel>{};
+    for (final store in remoteResults) {
+      if (store.id.trim().isNotEmpty) {
+        byId[store.id] = store;
+      }
+    }
+    for (final store in _baseStores) {
+      if (store.id.trim().isNotEmpty) {
+        byId.putIfAbsent(store.id, () => store);
+      }
+    }
+
+    final ranked = byId.values
+        .map((store) => MapEntry(store, _scoreStoreSearch(store, query)))
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) {
+        final scoreCompare = b.value.compareTo(a.value);
+        if (scoreCompare != 0) return scoreCompare;
+
+        final ratingCompare = b.key.rating.compareTo(a.key.rating);
+        if (ratingCompare != 0) return ratingCompare;
+
+        return b.key.totalReviews.compareTo(a.key.totalReviews);
+      });
+
+    return ranked.take(limit).map((entry) => entry.key).toList();
+  }
+
+  List<StoreModel> get _storeMatches => _mergeStoreResults(
+        remoteResults: _storeResults,
+        query: _query,
+        limit: 8,
+      );
+
+  List<UserModel> get _userMatches {
+    final ranked = _userResults
+        .map((user) => MapEntry(user, _scoreUserSearch(user, _query)))
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) {
+        final scoreCompare = b.value.compareTo(a.value);
+        if (scoreCompare != 0) return scoreCompare;
+        return b.key.createdAt.compareTo(a.key.createdAt);
+      });
+    return ranked.map((entry) => entry.key).toList(growable: false);
+  }
+
+  List<AdModel> get _titleMatches {
+    if (AdModel.normalizeValue(_query).isEmpty) return const [];
+
+    final matches = _baseAds.where((ad) => _scoreAdSearch(ad) > 0).toList();
+    return _sortAds(matches);
   }
 
   List<AdModel> get _relatedMatches {
@@ -444,22 +897,6 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
 
   List<AdModel> _sortAds(List<AdModel> ads) {
     final sorted = List<AdModel>.from(ads);
-    final normalizedQuery = AdModel.normalizeValue(_query);
-
-    sorted.sort((a, b) {
-      final aTitle = AdModel.normalizeValue(a.title);
-      final bTitle = AdModel.normalizeValue(b.title);
-      final aStarts = aTitle.startsWith(normalizedQuery);
-      final bStarts = bTitle.startsWith(normalizedQuery);
-      if (aStarts != bStarts) return aStarts ? -1 : 1;
-
-      final aDistance = _distanceKmForAd(a) ?? double.infinity;
-      final bDistance = _distanceKmForAd(b) ?? double.infinity;
-      final distanceCompare = aDistance.compareTo(bDistance);
-      if (distanceCompare != 0) return distanceCompare;
-
-      return b.createdAt.compareTo(a.createdAt);
-    });
 
     switch (_filters.sort) {
       case MarketplaceSort.newest:
@@ -473,8 +910,18 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
         break;
       case MarketplaceSort.recommended:
         sorted.sort((a, b) {
+          final relevanceCompare =
+              _scoreAdSearch(b).compareTo(_scoreAdSearch(a));
+          if (relevanceCompare != 0) return relevanceCompare;
+
           final clickDiff = b.clickCount.compareTo(a.clickCount);
           if (clickDiff != 0) return clickDiff;
+
+          final aDistance = _distanceKmForAd(a) ?? double.infinity;
+          final bDistance = _distanceKmForAd(b) ?? double.infinity;
+          final distanceCompare = aDistance.compareTo(bDistance);
+          if (distanceCompare != 0) return distanceCompare;
+
           return b.createdAt.compareTo(a.createdAt);
         });
         break;
@@ -1286,12 +1733,99 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     );
   }
 
+  Widget _buildSectionTitle(String title, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 18, 14, 10),
+      child: Text(
+        title,
+        style: GoogleFonts.roboto(
+          color: isDark ? Colors.white70 : Colors.black54,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUserResultTile(UserModel user, bool isDark) {
+    final cardColor = isDark ? AppTheme.blackCard : Colors.white;
+    final borderColor = isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB);
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: borderColor),
+        ),
+        tileColor: cardColor,
+        leading: CircleAvatar(
+          backgroundColor: AppTheme.facebookBlue.withValues(alpha: 0.12),
+          backgroundImage:
+              user.profilePhoto != null && user.profilePhoto!.trim().isNotEmpty
+                  ? NetworkImage(user.profilePhoto!)
+                  : null,
+          child: user.profilePhoto == null || user.profilePhoto!.trim().isEmpty
+              ? Text(
+                  user.firstName.isNotEmpty
+                      ? user.firstName[0].toUpperCase()
+                      : '?',
+                  style: GoogleFonts.roboto(
+                    color: AppTheme.facebookBlue,
+                    fontWeight: FontWeight.w800,
+                  ),
+                )
+              : null,
+        ),
+        title: Text(
+          user.fullName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: GoogleFonts.roboto(
+            color: textColor,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        subtitle: Text(
+          user.address.city.isNotEmpty
+              ? '${user.address.city}, ${user.address.state}'
+              : 'Perfil de usuario',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: GoogleFonts.roboto(
+            color: Colors.grey,
+            fontSize: 12.5,
+          ),
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SellerProfileScreen(
+                sellerId: user.uid,
+                sellerName: user.fullName,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? AppTheme.black : AppTheme.lightBg;
     final titleMatches = _titleMatches;
     final relatedMatches = _relatedMatches;
+    final storeMatches = _storeMatches;
+    final userMatches = _userMatches;
+    final hasAnyResults = titleMatches.isNotEmpty ||
+        relatedMatches.isNotEmpty ||
+        storeMatches.isNotEmpty ||
+        userMatches.isNotEmpty;
 
     return Scaffold(
       backgroundColor: bg,
@@ -1322,7 +1856,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                     fontSize: 15,
                   ),
                   decoration: InputDecoration(
-                    hintText: 'Buscar produtos e servicos',
+                    hintText: 'Buscar anuncios, lojas e perfis',
                     hintStyle: GoogleFonts.roboto(
                       color: Colors.grey,
                       fontSize: 14,
@@ -1371,7 +1905,16 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                     ),
                   ),
                 ),
-                if (titleMatches.isEmpty)
+                if (_isLoadingResults && !hasAnyResults)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        color: AppTheme.facebookBlue,
+                      ),
+                    ),
+                  )
+                else if (!hasAnyResults)
                   SliverFillRemaining(
                     hasScrollBody: false,
                     child: Center(
@@ -1390,48 +1933,88 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                     ),
                   )
                 else ...[
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(0, 10, 0, 0),
-                    sliver: SliverGrid(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final ad = titleMatches[index];
-                          return AdCard(
-                            ad: ad,
-                            index: index,
-                            badgeLabel: _badgeLabelForAd(ad),
-                            distanceKm: _roundedDistanceKmForAd(ad),
-                            onTap: () {
-                              context
-                                  .read<UserProvider>()
-                                  .trackCategoryClick(ad.category);
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => AdDetailScreen(ad: ad),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                        childCount: titleMatches.length,
-                      ),
-                      gridDelegate: _gridDelegate(context),
-                    ),
-                  ),
-                  if (relatedMatches.isNotEmpty)
+                  if (storeMatches.isNotEmpty)
                     SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 18, 14, 10),
-                        child: Text(
-                          'Relacionados',
-                          style: GoogleFonts.roboto(
-                            color: isDark ? Colors.white70 : Colors.black54,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      child: _buildSectionTitle('Lojas', isDark),
+                    ),
+                  if (storeMatches.isNotEmpty)
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final store = storeMatches[index];
+                            return StoreListCard(
+                              store: store,
+                              showFavoriteButton: false,
+                              showDivider: index != storeMatches.length - 1,
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => SellerProfileScreen(
+                                      sellerId: store.ownerId,
+                                      sellerName: store.name,
+                                      storeId: store.id,
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                          childCount: storeMatches.length,
                         ),
                       ),
+                    ),
+                  if (userMatches.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: _buildSectionTitle('Perfis', isDark),
+                    ),
+                  if (userMatches.isNotEmpty)
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) =>
+                            _buildUserResultTile(userMatches[index], isDark),
+                        childCount: userMatches.length,
+                      ),
+                    ),
+                  if (titleMatches.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: _buildSectionTitle('Anuncios', isDark),
+                    ),
+                  if (titleMatches.isNotEmpty)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+                      sliver: SliverGrid(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final ad = titleMatches[index];
+                            return AdCard(
+                              ad: ad,
+                              index: index,
+                              badgeLabel: _badgeLabelForAd(ad),
+                              distanceKm: _roundedDistanceKmForAd(ad),
+                              onTap: () {
+                                context
+                                    .read<UserProvider>()
+                                    .trackCategoryClick(ad.category);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => AdDetailScreen(ad: ad),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                          childCount: titleMatches.length,
+                        ),
+                        gridDelegate: _gridDelegate(context),
+                      ),
+                    ),
+                  if (titleMatches.isNotEmpty && relatedMatches.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: _buildSectionTitle('Relacionados', isDark),
                     ),
                   if (relatedMatches.isNotEmpty)
                     SliverPadding(

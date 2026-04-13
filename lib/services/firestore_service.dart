@@ -449,39 +449,213 @@ class FirestoreService {
     if (normalizedQuery.isEmpty) return [];
 
     try {
+      final queryTerms = normalizedQuery
+          .split(RegExp(r'[^a-z0-9]+'))
+          .where((term) => term.isNotEmpty)
+          .toList(growable: false);
       final snapshot = await _firestore
           .collection('users')
           .orderBy('createdAt', descending: true)
-          .limit(40)
+          .limit(60)
           .get();
 
-      final users =
-          snapshot.docs.map((d) => UserModel.fromMap(d.data())).where((user) {
+      final ranked = <MapEntry<UserModel, int>>[];
+      for (final doc in snapshot.docs) {
+        final user = UserModel.fromMap(doc.data());
         final fullName = AdModel.normalizeValue(user.fullName);
         final firstName = AdModel.normalizeValue(user.firstName);
         final lastName = AdModel.normalizeValue(user.lastName);
-        return fullName.contains(normalizedQuery) ||
-            firstName.contains(normalizedQuery) ||
-            lastName.contains(normalizedQuery);
-      }).toList();
+        final city = AdModel.normalizeValue(user.address.city);
+        final state = AdModel.normalizeValue(user.address.state);
 
-      users.sort((a, b) {
-        final aName = AdModel.normalizeValue(a.fullName);
-        final bName = AdModel.normalizeValue(b.fullName);
-        final aStarts = aName.startsWith(normalizedQuery);
-        final bStarts = bName.startsWith(normalizedQuery);
-        if (aStarts != bStarts) return aStarts ? -1 : 1;
-        final aFirstStarts =
-            AdModel.normalizeValue(a.firstName).startsWith(normalizedQuery);
-        final bFirstStarts =
-            AdModel.normalizeValue(b.firstName).startsWith(normalizedQuery);
-        if (aFirstStarts != bFirstStarts) return aFirstStarts ? -1 : 1;
-        return aName.compareTo(bName);
+        var score = 0;
+        if (fullName == normalizedQuery) score += 220;
+        if (firstName == normalizedQuery || lastName == normalizedQuery) {
+          score += 180;
+        }
+        if (fullName.startsWith(normalizedQuery)) score += 160;
+        if (firstName.startsWith(normalizedQuery)) score += 110;
+        if (lastName.startsWith(normalizedQuery)) score += 90;
+        if (fullName.contains(normalizedQuery)) score += 100;
+        if (city.contains(normalizedQuery) || state.contains(normalizedQuery)) {
+          score += 28;
+        }
+
+        for (final term in queryTerms) {
+          if (fullName.contains(term)) score += 22;
+          if (firstName.contains(term)) score += 18;
+          if (lastName.contains(term)) score += 14;
+          if (city.contains(term) || state.contains(term)) score += 6;
+        }
+
+        if (score > 0) {
+          ranked.add(MapEntry(user, score));
+        }
+      }
+
+      ranked.sort((a, b) {
+        final scoreCompare = b.value.compareTo(a.value);
+        if (scoreCompare != 0) return scoreCompare;
+        return b.key.createdAt.compareTo(a.key.createdAt);
       });
 
-      return users.take(limit).toList();
+      return ranked.take(limit).map((entry) => entry.key).toList();
     } catch (e) {
       debugPrint('searchUsersByName($query) falhou: $e');
+      return [];
+    }
+  }
+
+  Future<List<StoreModel>> searchStoresByName(
+    String query, {
+    int limit = 3,
+  }) async {
+    final normalizedQuery = AdModel.normalizeValue(query).trim();
+    if (normalizedQuery.isEmpty) return [];
+
+    try {
+      final queryTerms = normalizedQuery
+          .split(RegExp(r'[^a-z0-9]+'))
+          .where((term) => term.isNotEmpty)
+          .toList(growable: false);
+      final stores = await getAllStores();
+      final ranked = <MapEntry<StoreModel, int>>[];
+
+      for (final store in stores) {
+        final name = AdModel.normalizeValue(store.name);
+        final category = AdModel.normalizeValue(store.category);
+        final description = AdModel.normalizeValue(store.description);
+        final ownerName = AdModel.normalizeValue(store.ownerName);
+        final accessUsername = AdModel.normalizeValue(store.accessUsername);
+        final city = AdModel.normalizeValue(store.address.city);
+        final state = AdModel.normalizeValue(store.address.state);
+
+        var score = 0;
+        if (name == normalizedQuery) score += 240;
+        if (name.startsWith(normalizedQuery)) score += 180;
+        if (name.contains(normalizedQuery)) score += 120;
+        if (accessUsername.startsWith(normalizedQuery)) score += 110;
+        if (accessUsername.contains(normalizedQuery)) score += 90;
+        if (category.contains(normalizedQuery)) score += 52;
+        if (ownerName.contains(normalizedQuery)) score += 32;
+        if (description.contains(normalizedQuery)) score += 24;
+        if (city.contains(normalizedQuery) || state.contains(normalizedQuery)) {
+          score += 18;
+        }
+
+        for (final term in queryTerms) {
+          if (name.contains(term)) score += 28;
+          if (category.contains(term)) score += 18;
+          if (description.contains(term)) score += 10;
+          if (ownerName.contains(term) || accessUsername.contains(term)) {
+            score += 10;
+          }
+          if (city.contains(term) || state.contains(term)) score += 4;
+        }
+
+        if (score > 0) {
+          ranked.add(MapEntry(store, score));
+        }
+      }
+
+      ranked.sort((a, b) {
+        final scoreCompare = b.value.compareTo(a.value);
+        if (scoreCompare != 0) return scoreCompare;
+
+        final ratingCompare = b.key.rating.compareTo(a.key.rating);
+        if (ratingCompare != 0) return ratingCompare;
+
+        final reviewsCompare =
+            b.key.totalReviews.compareTo(a.key.totalReviews);
+        if (reviewsCompare != 0) return reviewsCompare;
+
+        return b.key.createdAt.compareTo(a.key.createdAt);
+      });
+
+      return ranked.take(limit).map((entry) => entry.key).toList();
+    } catch (e) {
+      debugPrint('searchStoresByName($query) falhou: $e');
+      return [];
+    }
+  }
+
+  Future<List<AdModel>> searchAds(
+    String query, {
+    int limit = 40,
+    bool includeInactive = false,
+  }) async {
+    final normalizedQuery = AdModel.normalizeValue(query).trim();
+    if (normalizedQuery.isEmpty) return [];
+
+    try {
+      final queryTerms = normalizedQuery
+          .split(RegExp(r'[^a-z0-9]+'))
+          .where((term) => term.isNotEmpty)
+          .toList(growable: false);
+      final snapshot = await _firestore
+          .collection('ads')
+          .orderBy('createdAt', descending: true)
+          .limit(limit * 3)
+          .get();
+
+      final ranked = <MapEntry<AdModel, int>>[];
+      for (final doc in snapshot.docs) {
+        final ad = AdModel.fromMap(doc.data());
+        if (!includeInactive && !ad.isActive) continue;
+        if (ad.intent != AdModel.intentSell) continue;
+
+        final title = AdModel.normalizeValue(ad.title);
+        final category = AdModel.normalizeValue(ad.category);
+        final categoryType = AdModel.normalizeValue(ad.displayCategoryTypeLabel);
+        final description = AdModel.normalizeValue(ad.description);
+        final sellerName = AdModel.normalizeValue(ad.sellerName);
+        final storeName = AdModel.normalizeValue(ad.storeName ?? '');
+
+        var score = 0;
+        if (title == normalizedQuery) score += 260;
+        if (title.startsWith(normalizedQuery)) score += 170;
+        if (title.contains(normalizedQuery)) score += 120;
+        if (category.contains(normalizedQuery)) score += 60;
+        if (categoryType.contains(normalizedQuery)) score += 52;
+        if (description.contains(normalizedQuery)) score += 26;
+        if (sellerName.contains(normalizedQuery) ||
+            storeName.contains(normalizedQuery)) {
+          score += 22;
+        }
+
+        for (final term in queryTerms) {
+          if (title.contains(term)) score += 24;
+          if (category.contains(term) || categoryType.contains(term)) {
+            score += 15;
+          }
+          if (description.contains(term)) score += 6;
+          if (sellerName.contains(term) || storeName.contains(term)) {
+            score += 5;
+          }
+        }
+
+        for (final attribute in ad.customAttributes) {
+          final label = AdModel.normalizeValue(attribute.label);
+          final value = AdModel.normalizeValue(attribute.value);
+          if (label.contains(normalizedQuery) || value.contains(normalizedQuery)) {
+            score += 10;
+          }
+        }
+
+        if (score > 0) {
+          ranked.add(MapEntry(ad, score));
+        }
+      }
+
+      ranked.sort((a, b) {
+        final scoreCompare = b.value.compareTo(a.value);
+        if (scoreCompare != 0) return scoreCompare;
+        return b.key.createdAt.compareTo(a.key.createdAt);
+      });
+
+      return ranked.take(limit).map((entry) => entry.key).toList();
+    } catch (e) {
+      debugPrint('searchAds($query) falhou: $e');
       return [];
     }
   }
@@ -524,6 +698,47 @@ class FirestoreService {
     final sorted = clicks.entries.toList()
       ..sort((a, b) => (b.value as num).compareTo(a.value as num));
     return sorted.map((e) => e.key).toList();
+  }
+
+  Future<List<String>> getTrendingCategories({
+    int limit = 6,
+    String? intent,
+  }) async {
+    try {
+      Query query = _firestore.collection('ads');
+
+      final snapshot =
+          await query.orderBy('clickCount', descending: true).limit(120).get();
+
+      final categoryScores = <String, int>{};
+      for (final doc in snapshot.docs) {
+        final ad = AdModel.fromMap(doc.data() as Map<String, dynamic>);
+        if (intent != null && ad.intent != intent) continue;
+
+        final resolvedCategory =
+            AdModel.resolveCategoryValue(ad.category).trim();
+        if (resolvedCategory.isEmpty) continue;
+
+        final currentScore = categoryScores[resolvedCategory] ?? 0;
+        final engagementScore = ad.clickCount > 0 ? ad.clickCount : 1;
+        categoryScores[resolvedCategory] = currentScore + engagementScore;
+      }
+
+      final rankedCategories = categoryScores.entries.toList()
+        ..sort((a, b) {
+          final byScore = b.value.compareTo(a.value);
+          if (byScore != 0) return byScore;
+          return a.key.compareTo(b.key);
+        });
+
+      return rankedCategories
+          .map((entry) => entry.key)
+          .take(limit)
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('getTrendingCategories falhou: $e');
+      return [];
+    }
   }
 
   // ── Lojas ─────────────────────────────────────────────────────────────────
@@ -779,12 +994,17 @@ class FirestoreService {
   }
 
   Future<List<StoreModel>> getStores({int limit = 15}) async {
-    final snapshot = await _firestore
-        .collection('stores')
-        .where('isActive', isEqualTo: true)
-        .limit(limit)
-        .get();
-    return snapshot.docs.map((d) => StoreModel.fromMap(d.data())).toList();
+    try {
+      final snapshot = await _firestore
+          .collection('stores')
+          .where('isActive', isEqualTo: true)
+          .limit(limit)
+          .get();
+      return snapshot.docs.map((d) => StoreModel.fromMap(d.data())).toList();
+    } catch (e) {
+      debugPrint('getStores falhou: $e');
+      return [];
+    }
   }
 
   Future<List<StoreModel>> getFeaturedStores({int limit = 15}) async {
@@ -841,14 +1061,14 @@ class FirestoreService {
     bool includeInactive = false,
   }) async {
     try {
+      final fetchLimit = intent != null ? limit * 4 : limit;
       Query query =
           _firestore.collection('ads').orderBy('createdAt', descending: true);
       if (type != null) query = query.where('type', isEqualTo: type);
-      if (intent != null) query = query.where('intent', isEqualTo: intent);
       if (category != null) {
         query = query.where('category', isEqualTo: category);
       }
-      query = query.limit(limit);
+      query = query.limit(fetchLimit);
       if (startAfter != null) query = query.startAfterDocument(startAfter);
       final snapshot = await query.get();
       var ads = snapshot.docs.map((doc) {
@@ -861,14 +1081,15 @@ class FirestoreService {
       if (intent != null) {
         ads = ads.where((ad) => ad.intent == intent).toList();
       }
-      return ads;
+      return ads.take(limit).toList();
     } catch (e) {
       debugPrint('getAds falhou, usando fallback sem filtros: $e');
       try {
+        final fetchLimit = intent != null ? limit * 4 : limit;
         final snapshot = await _firestore
             .collection('ads')
             .orderBy('createdAt', descending: true)
-            .limit(limit)
+            .limit(fetchLimit)
             .get();
         var ads = snapshot.docs.map((doc) {
           final data = doc.data();
@@ -901,16 +1122,15 @@ class FirestoreService {
     bool includeInactive = false,
   }) async {
     try {
+      final fetchLimit = (limit + (excludeAdId?.isNotEmpty == true ? 1 : 0)) *
+          (intent != null ? 4 : 1);
       Query query = _firestore.collection('ads').where(
             'category',
             isEqualTo: category,
           );
-      if (intent != null) {
-        query = query.where('intent', isEqualTo: intent);
-      }
       final snapshot = await query
           .orderBy('createdAt', descending: true)
-          .limit(limit + (excludeAdId?.isNotEmpty == true ? 1 : 0))
+          .limit(fetchLimit)
           .get();
       var ads = snapshot.docs
           .map((d) => AdModel.fromMap(d.data() as Map<String, dynamic>))
@@ -1477,11 +1697,10 @@ class FirestoreService {
     String? intent,
   }) async {
     try {
-      final fetchLimit = startAfter != null ? limit : limit * 3;
+      final fetchLimit = startAfter != null
+          ? (intent != null ? limit * 4 : limit)
+          : limit * (intent != null ? 5 : 3);
       Query query = _firestore.collection('ads');
-      if (intent != null) {
-        query = query.where('intent', isEqualTo: intent);
-      }
       query = query.orderBy('clickCount', descending: true).limit(fetchLimit);
       if (startAfter != null) {
         query = query.startAfterDocument(startAfter);
@@ -1501,10 +1720,11 @@ class FirestoreService {
       return ads.take(limit).toList();
     } catch (e) {
       debugPrint('getPopularAds falhou, usando fallback por createdAt: $e');
+      final fetchLimit = intent != null ? limit * 4 : limit;
       final snapshot = await _firestore
           .collection('ads')
           .orderBy('createdAt', descending: true)
-          .limit(limit)
+          .limit(fetchLimit)
           .get();
       var ads = snapshot.docs.map((d) => AdModel.fromMap(d.data())).toList();
       if (intent != null) {
@@ -1533,13 +1753,11 @@ class FirestoreService {
   }) async {
     final resolvedCategory = AdModel.resolveCategoryValue(category);
     try {
+      final fetchLimit = intent != null ? limit * 4 : limit;
       Query query = _firestore
           .collection('ads')
           .where('category', isEqualTo: resolvedCategory);
-      if (intent != null) {
-        query = query.where('intent', isEqualTo: intent);
-      }
-      query = query.orderBy('createdAt', descending: true).limit(limit);
+      query = query.orderBy('createdAt', descending: true).limit(fetchLimit);
       if (startAfter != null) query = query.startAfterDocument(startAfter);
       final snapshot = await query.get();
       var ads = snapshot.docs
@@ -1549,18 +1767,16 @@ class FirestoreService {
         ads = ads.where((ad) => ad.intent == intent).toList();
       }
       final lastDoc = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
-      return {'ads': ads, 'lastDoc': lastDoc};
+      return {'ads': ads.take(limit).toList(), 'lastDoc': lastDoc};
     } catch (e) {
       debugPrint(
           'getAdsByCategoryPaginated($resolvedCategory) falhou, usando fallback: $e');
       try {
+        final fetchLimit = intent != null ? limit * 4 : limit;
         Query query = _firestore
             .collection('ads')
             .where('category', isEqualTo: resolvedCategory);
-        if (intent != null) {
-          query = query.where('intent', isEqualTo: intent);
-        }
-        query = query.limit(limit);
+        query = query.limit(fetchLimit);
         if (startAfter != null) query = query.startAfterDocument(startAfter);
         final snapshot = await query.get();
         var ads = snapshot.docs
@@ -1571,7 +1787,7 @@ class FirestoreService {
         }
         ads.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         final lastDoc = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
-        return {'ads': ads, 'lastDoc': lastDoc};
+        return {'ads': ads.take(limit).toList(), 'lastDoc': lastDoc};
       } catch (_) {
         return {'ads': <AdModel>[], 'lastDoc': null};
       }
@@ -1585,12 +1801,10 @@ class FirestoreService {
     DocumentSnapshot? startAfter,
   }) async {
     try {
+      final fetchLimit = intent != null ? limit * 4 : limit;
       if (topCategories.isEmpty) {
         Query query = _firestore.collection('ads');
-        if (intent != null) {
-          query = query.where('intent', isEqualTo: intent);
-        }
-        query = query.orderBy('clickCount', descending: true).limit(limit);
+        query = query.orderBy('clickCount', descending: true).limit(fetchLimit);
         if (startAfter != null) query = query.startAfterDocument(startAfter);
         final snapshot = await query.get();
         var ads = snapshot.docs
@@ -1600,17 +1814,14 @@ class FirestoreService {
           ads = ads.where((ad) => ad.intent == intent).toList();
         }
         return {
-          'ads': ads,
+          'ads': ads.take(limit).toList(),
           'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null
         };
       }
       final cats = topCategories.take(3).toList();
       Query query =
           _firestore.collection('ads').where('category', whereIn: cats);
-      if (intent != null) {
-        query = query.where('intent', isEqualTo: intent);
-      }
-      query = query.orderBy('createdAt', descending: true).limit(limit);
+      query = query.orderBy('createdAt', descending: true).limit(fetchLimit);
       if (startAfter != null) query = query.startAfterDocument(startAfter);
       final snapshot = await query.get();
       var ads = snapshot.docs
@@ -1620,15 +1831,16 @@ class FirestoreService {
         ads = ads.where((ad) => ad.intent == intent).toList();
       }
       return {
-        'ads': ads,
+        'ads': ads.take(limit).toList(),
         'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null
       };
     } catch (e) {
       debugPrint('getRecommendedAdsPaginated falhou, usando fallback: $e');
+      final fetchLimit = intent != null ? limit * 4 : limit;
       final snapshot = await _firestore
           .collection('ads')
           .orderBy('createdAt', descending: true)
-          .limit(limit)
+          .limit(fetchLimit)
           .get();
       var ads = snapshot.docs.map((d) => AdModel.fromMap(d.data())).toList();
       if (intent != null) {
@@ -1649,7 +1861,15 @@ class FirestoreService {
           .get();
       final stores =
           snapshot.docs.map((d) => StoreModel.fromMap(d.data())).toList();
-      stores.sort((a, b) => b.rating.compareTo(a.rating));
+      stores.sort((a, b) {
+        final ratingComparison = b.rating.compareTo(a.rating);
+        if (ratingComparison != 0) return ratingComparison;
+
+        final reviewsComparison = b.totalReviews.compareTo(a.totalReviews);
+        if (reviewsComparison != 0) return reviewsComparison;
+
+        return b.createdAt.compareTo(a.createdAt);
+      });
       return stores;
     } catch (e) {
       debugPrint('getAllStores falhou: $e');

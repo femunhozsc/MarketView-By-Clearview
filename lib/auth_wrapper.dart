@@ -100,6 +100,23 @@ class _LaunchFlowState extends State<_LaunchFlow> {
   bool _forYouLoading = false;
   bool _forYouPersonalized = false;
 
+  List<String> _mergeCategoryOrder(List<String> priorityCategories) {
+    final ordered = <String>[];
+
+    for (final category in priorityCategories) {
+      if (category.isEmpty || ordered.contains(category)) continue;
+      ordered.add(category);
+    }
+
+    for (final category in _defaultCategoryOrder) {
+      if (!ordered.contains(category)) {
+        ordered.add(category);
+      }
+    }
+
+    return ordered;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -144,17 +161,15 @@ class _LaunchFlowState extends State<_LaunchFlow> {
 
     try {
       final userProvider = context.read<UserProvider>();
-      final user = userProvider.user;
       final hasInterestData =
-          useUserPreferences && user != null && user.categoryClicks.isNotEmpty;
-      final topCategories =
-          hasInterestData ? user.topCategories : _defaultCategoryOrder;
-      final orderedCategories = hasInterestData
-          ? [
-              ...topCategories,
-              ..._defaultCategoryOrder.where((c) => !topCategories.contains(c)),
-            ]
-          : List<String>.from(_defaultCategoryOrder);
+          useUserPreferences && userProvider.hasPersonalizedTasteProfile;
+      final priorityCategories = hasInterestData
+          ? userProvider.topCategoryPreferences
+          : await _firestore.getTrendingCategories(
+              limit: _defaultCategoryOrder.length,
+              intent: AdModel.intentSell,
+            );
+      final orderedCategories = _mergeCategoryOrder(priorityCategories);
 
       List<AdModel> recommended = [];
       if (hasInterestData) {

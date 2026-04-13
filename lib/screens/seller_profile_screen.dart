@@ -21,11 +21,13 @@ class SellerProfileScreen extends StatefulWidget {
     required this.sellerId,
     required this.sellerName,
     this.storeId,
+    this.showAppBar = true,
   });
 
   final String sellerId;
   final String sellerName;
   final String? storeId;
+  final bool showAppBar;
 
   @override
   State<SellerProfileScreen> createState() => _SellerProfileScreenState();
@@ -334,11 +336,14 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                             if (context.read<UserProvider>().user == null) {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                                MaterialPageRoute(
+                                    builder: (_) => const ProfileScreen()),
                               );
                               return;
                             }
-                            context.read<UserProvider>().toggleFollowSeller(widget.sellerId);
+                            context
+                                .read<UserProvider>()
+                                .toggleFollowSeller(widget.sellerId);
                           },
                     style: FilledButton.styleFrom(
                       backgroundColor: following
@@ -392,11 +397,13 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
 
     return Scaffold(
       backgroundColor: bg,
-      appBar: AppBar(
-        backgroundColor: isDark ? AppTheme.black : Colors.white,
-        elevation: 0,
-        title: _buildMarketViewWordmark(isDark),
-      ),
+      appBar: widget.showAppBar
+          ? AppBar(
+              backgroundColor: isDark ? AppTheme.black : Colors.white,
+              elevation: 0,
+              title: _buildMarketViewWordmark(isDark),
+            )
+          : null,
       body: ListView(
         padding: EdgeInsets.zero,
         children: [

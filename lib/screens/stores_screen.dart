@@ -336,6 +336,9 @@ class _StoresScreenState extends State<StoresScreen> {
     if (normalized.contains('saude')) return Icons.favorite_rounded;
     if (normalized.contains('beleza')) return Icons.spa_rounded;
     if (normalized.contains('educa')) return Icons.school_rounded;
+    if (normalized.contains('vaga') || normalized.contains('emprego')) {
+      return Icons.work_outline_rounded;
+    }
     if (normalized.contains('aliment')) return Icons.restaurant_rounded;
     if (normalized.contains('servico')) return Icons.handyman_rounded;
     return Icons.storefront_rounded;

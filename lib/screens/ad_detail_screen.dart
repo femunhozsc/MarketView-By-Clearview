@@ -701,11 +701,14 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
                                 if (context.read<UserProvider>().user == null) {
                                   Navigator.push(
                                     context,
-                                    MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                                    MaterialPageRoute(
+                                        builder: (_) => const ProfileScreen()),
                                   );
                                   return;
                                 }
-                                context.read<UserProvider>().toggleFollowSeller(widget.ad.sellerId);
+                                context
+                                    .read<UserProvider>()
+                                    .toggleFollowSeller(widget.ad.sellerId);
                               },
                         style: FilledButton.styleFrom(
                           backgroundColor: isFollowing
@@ -821,6 +824,23 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: widget.ad.propertyDetailEntries
                       .where((entry) => entry.key != 'Subtipo')
+                      .map(
+                        (entry) => _detailRow(
+                          entry.key,
+                          entry.value,
+                          titleColor,
+                          subColor,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            if (widget.ad.hasCustomAttributes)
+              _section(
+                title: 'Especificações',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: widget.ad.customAttributeEntries
                       .map(
                         (entry) => _detailRow(
                           entry.key,
@@ -979,22 +999,28 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
     Color subColor,
   ) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 100,
+            width: 118,
             child: Text(
               label,
-              style: GoogleFonts.roboto(color: subColor),
+              style: GoogleFonts.roboto(
+                color: subColor,
+                height: 1.35,
+              ),
             ),
           ),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               value,
               style: GoogleFonts.roboto(
                 color: titleColor,
                 fontWeight: FontWeight.w600,
+                height: 1.35,
               ),
             ),
           ),

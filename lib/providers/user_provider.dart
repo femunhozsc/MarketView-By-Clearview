@@ -1,9 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/ad_model.dart';
 import '../models/user_model.dart';
+import '../services/app_preferences_service.dart';
 import '../services/firestore_service.dart';
 
 class UserProvider extends ChangeNotifier {
+  static const int personalizationCategoryThreshold = 3;
+  static const int personalizationTotalThreshold = 5;
+
   UserModel? _user;
   bool _loading = false;
   bool _hasResolvedCurrentUser = false;
@@ -11,7 +18,14 @@ class UserProvider extends ChangeNotifier {
   int _marketplaceRefreshTick = 0;
   final List<String> _recentSearches = [];
   final FirestoreService _firestore = FirestoreService();
+  final AppPreferencesService _appPreferences = AppPreferencesService();
   bool _hasRequestedGuestLocation = false;
+  Map<String, int> _guestCategoryClicks = const {};
+  Future<void>? _initializationFuture;
+
+  UserProvider() {
+    unawaited(initialize());
+  }
 
   UserModel? get user => _user;
   bool get loading => _loading;
@@ -21,6 +35,48 @@ class UserProvider extends ChangeNotifier {
   int get marketplaceRefreshTick => _marketplaceRefreshTick;
   List<String> get recentSearches => List.unmodifiable(_recentSearches);
   bool get hasRequestedGuestLocation => _hasRequestedGuestLocation;
+  Map<String, int> get categoryPreferenceClicks => Map.unmodifiable(
+        _user?.categoryClicks ?? _guestCategoryClicks,
+      );
+  List<String> get topCategoryPreferences {
+    final entries = categoryPreferenceClicks.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    return entries.map((entry) => entry.key).toList(growable: false);
+  }
+
+  int get totalCategoryPreferenceSignals => categoryPreferenceClicks.values
+      .fold(0, (runningTotal, value) => runningTotal + value);
+  bool get hasPersonalizedTasteProfile {
+    final clicks = categoryPreferenceClicks;
+    if (clicks.isEmpty) return false;
+
+    final topCategoryClicks = clicks.values.fold<int>(
+      0,
+      (maxValue, value) => value > maxValue ? value : maxValue,
+    );
+
+    return topCategoryClicks >= personalizationCategoryThreshold ||
+        totalCategoryPreferenceSignals >= personalizationTotalThreshold;
+  }
+
+  Future<void> initialize() async {
+    _initializationFuture ??= _loadGuestPreferences();
+    await _initializationFuture;
+  }
+
+  Future<void> _loadGuestPreferences() async {
+    try {
+      _guestCategoryClicks = await _appPreferences.loadGuestCategoryClicks();
+    } catch (e) {
+      debugPrint('Erro ao carregar preferencias locais do visitante: $e');
+      _guestCategoryClicks = const {};
+    }
+    notifyListeners();
+  }
 
   void setGuestLocationRequested() {
     _hasRequestedGuestLocation = true;
@@ -233,19 +289,45 @@ class UserProvider extends ChangeNotifier {
   /// Registra um clique em uma categoria para o sistema de recomendação.
   /// Atualiza localmente e no Firestore de forma assíncrona.
   Future<void> trackCategoryClick(String category) async {
-    if (_user == null) return;
+    final resolvedCategory = AdModel.resolveCategoryValue(category).trim();
+    if (resolvedCategory.isEmpty) return;
 
-    // Atualiza localmente primeiro para resposta imediata
-    final updatedClicks = Map<String, int>.from(_user!.categoryClicks);
-    updatedClicks[category] = (updatedClicks[category] ?? 0) + 1;
-    _user = _user!.copyWith(categoryClicks: updatedClicks);
-    notifyListeners();
+    final previousTopCategories = topCategoryPreferences.take(3).toList();
+    final wasPersonalized = hasPersonalizedTasteProfile;
 
-    // Persiste no Firestore em background
-    try {
-      await _firestore.trackCategoryClick(_user!.uid, category);
-    } catch (e) {
-      debugPrint('Erro ao rastrear clique de categoria: $e');
+    if (_user != null) {
+      // Atualiza localmente primeiro para resposta imediata
+      final updatedClicks = Map<String, int>.from(_user!.categoryClicks);
+      updatedClicks[resolvedCategory] =
+          (updatedClicks[resolvedCategory] ?? 0) + 1;
+      _user = _user!.copyWith(categoryClicks: updatedClicks);
+      notifyListeners();
+
+      // Persiste no Firestore em background
+      try {
+        await _firestore.trackCategoryClick(_user!.uid, resolvedCategory);
+      } catch (e) {
+        debugPrint('Erro ao rastrear clique de categoria: $e');
+      }
+    } else {
+      final updatedClicks = Map<String, int>.from(_guestCategoryClicks);
+      updatedClicks[resolvedCategory] =
+          (updatedClicks[resolvedCategory] ?? 0) + 1;
+      _guestCategoryClicks = updatedClicks;
+      notifyListeners();
+
+      try {
+        await _appPreferences.saveGuestCategoryClicks(_guestCategoryClicks);
+      } catch (e) {
+        debugPrint('Erro ao salvar perfil local do visitante: $e');
+      }
+    }
+
+    final currentTopCategories = topCategoryPreferences.take(3).toList();
+    final isPersonalized = hasPersonalizedTasteProfile;
+    if (wasPersonalized != isPersonalized ||
+        previousTopCategories.join('|') != currentTopCategories.join('|')) {
+      notifyMarketplaceChanged();
     }
   }
 }

@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 import '../models/ad_model.dart';
+import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ad_card.dart';
@@ -14,6 +16,7 @@ import 'favorites_screen.dart';
 class CategoryAdsScreen extends StatefulWidget {
   final String category;
   final IconData icon;
+  final bool ignoreLocationFilter;
   final String locationScope;
   final String locationRegionKey;
   final double searchLat;
@@ -25,6 +28,7 @@ class CategoryAdsScreen extends StatefulWidget {
     super.key,
     required this.category,
     required this.icon,
+    this.ignoreLocationFilter = false,
     this.locationScope = 'city',
     this.locationRegionKey = '',
     this.searchLat = 0,
@@ -96,6 +100,8 @@ class _CategoryAdsScreenState extends State<CategoryAdsScreen> {
   }
 
   bool _matchesSelectedLocation(AdModel ad) {
+    if (widget.ignoreLocationFilter) return true;
+
     final hasExplicitLocation = widget.searchLat != 0 ||
         widget.searchLng != 0 ||
         widget.locationLabel.trim().isNotEmpty ||
@@ -120,6 +126,7 @@ class _CategoryAdsScreenState extends State<CategoryAdsScreen> {
   }
 
   int? _roundedDistanceKmForAd(AdModel ad) {
+    if (widget.ignoreLocationFilter) return null;
     if (widget.locationScope != 'city') return null;
     final distanceKm = _distanceKmForAd(ad);
     if (distanceKm == null) return null;
@@ -299,13 +306,19 @@ class _CategoryAdsScreenState extends State<CategoryAdsScreen> {
                                 ad: ad,
                                 index: i,
                                 badgeLabel: widget.locationScope == 'state'
-                                    ? 'Na regiao'
+                                    ? (widget.ignoreLocationFilter
+                                        ? null
+                                        : 'Na regiao')
                                     : widget.locationScope == 'country'
-                                        ? 'Brasil'
+                                        ? (widget.ignoreLocationFilter
+                                            ? null
+                                            : 'Brasil')
                                         : null,
                                 distanceKm: _roundedDistanceKmForAd(ad),
                                 onTap: () {
-                                  _firestore.incrementAdClick(ad.id);
+                                  context
+                                      .read<UserProvider>()
+                                      .trackCategoryClick(ad.category);
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(

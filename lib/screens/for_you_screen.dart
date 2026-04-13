@@ -31,6 +31,13 @@ const Map<String, List<String>> _stateAliasesByRegionKey = {
 const Color _marketCharcoal = Color(0xFF35393F);
 const Color _marketMuted = Color(0xFF6B7280);
 const Color _marketLine = Color(0xFFD1D5DB);
+const List<String> _promoBannerAssets = [
+  'assets/images/banner_ad_1.png',
+  'assets/images/banner_ad_2.png',
+  'assets/images/banner_ad_3.png',
+  'assets/images/banner_ad_4.png',
+  'assets/images/banner_ad_5.png',
+];
 
 String _normalizeLocationValue(String value) => AdModel.normalizeValue(value);
 
@@ -121,6 +128,7 @@ int? _roundedDistanceKm(
 // Tela "Ver Mais Recomendados" com scroll infinito
 class AllRecommendedScreen extends StatefulWidget {
   final List<String> topCategories;
+  final bool ignoreLocationFilter;
   final String locationScope;
   final String locationRegionKey;
   final double searchLat;
@@ -131,6 +139,7 @@ class AllRecommendedScreen extends StatefulWidget {
   const AllRecommendedScreen({
     super.key,
     required this.topCategories,
+    this.ignoreLocationFilter = false,
     this.locationScope = 'city',
     this.locationRegionKey = '',
     this.searchLat = 0,
@@ -168,6 +177,10 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
   }
 
   List<AdModel> get _visibleAds {
+    if (widget.ignoreLocationFilter) {
+      return List<AdModel>.from(_ads);
+    }
+
     final filtered = _ads.where((ad) {
       return _matchesSelectedLocationRule(
         ad: ad,
@@ -274,7 +287,9 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
           ),
         ),
         title: Text(
-          'Recomendados para você',
+          widget.topCategories.isEmpty
+              ? 'Anuncios recomendados'
+              : 'Recomendados para voce',
           style: GoogleFonts.roboto(
             color: isDark ? Colors.white : _marketCharcoal,
             fontSize: 20,
@@ -319,19 +334,27 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
                               ad: ad,
                               index: i,
                               badgeLabel: widget.locationScope == 'state'
-                                  ? 'Na regiao'
+                                  ? (widget.ignoreLocationFilter
+                                      ? null
+                                      : 'Na regiao')
                                   : widget.locationScope == 'country'
-                                      ? 'Brasil'
+                                      ? (widget.ignoreLocationFilter
+                                          ? null
+                                          : 'Brasil')
                                       : null,
                               distanceKm: _roundedDistanceKm(
                                 ad,
                                 _distance,
-                                widget.locationScope,
+                                widget.ignoreLocationFilter
+                                    ? 'country'
+                                    : widget.locationScope,
                                 widget.searchLat,
                                 widget.searchLng,
                               ),
                               onTap: () {
-                                _firestore.incrementAdClick(ad.id);
+                                context
+                                    .read<UserProvider>()
+                                    .trackCategoryClick(ad.category);
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -436,6 +459,28 @@ class _ForYouScreenState extends State<ForYouScreen> {
   // Ordem padrão de categorias para novos usuários
   static const List<String> _defaultCategoryOrder = categories;
 
+  bool get _isGuestDiscoveryMode {
+    final user = context.read<UserProvider>().user;
+    return user == null && _isNewUser;
+  }
+
+  List<String> _mergeCategoryOrder(List<String> priorityCategories) {
+    final ordered = <String>[];
+
+    for (final category in priorityCategories) {
+      if (category.isEmpty || ordered.contains(category)) continue;
+      ordered.add(category);
+    }
+
+    for (final category in _defaultCategoryOrder) {
+      if (!ordered.contains(category)) {
+        ordered.add(category);
+      }
+    }
+
+    return ordered;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -465,7 +510,6 @@ class _ForYouScreenState extends State<ForYouScreen> {
 
     if (widget.initialUserCategories.isNotEmpty) {
       _userCategories = List<String>.from(widget.initialUserCategories);
-      _isNewUser = false;
     }
 
     if (widget.initialRecommendedAds.isNotEmpty) {
@@ -501,14 +545,12 @@ class _ForYouScreenState extends State<ForYouScreen> {
   }
 
   void _resolveUserCategories() {
-    final user = context.read<UserProvider>().user;
+    final userProvider = context.read<UserProvider>();
 
-    if (user != null && user.categoryClicks.isNotEmpty) {
+    if (userProvider.hasPersonalizedTasteProfile) {
       _isNewUser = false;
-      final topCats = user.topCategories;
-      final remaining =
-          _defaultCategoryOrder.where((c) => !topCats.contains(c)).toList();
-      _userCategories = [...topCats, ...remaining];
+      _userCategories =
+          _mergeCategoryOrder(userProvider.topCategoryPreferences);
       return;
     }
 
@@ -564,7 +606,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
   }
 
   Future<void> _loadInitialData() async {
-    final user = context.read<UserProvider>().user;
+    final userProvider = context.read<UserProvider>();
 
     if (mounted) {
       setState(() {
@@ -579,16 +621,18 @@ class _ForYouScreenState extends State<ForYouScreen> {
     }
 
     // Determina se é novo usuário e define categorias
-    if (user != null && user.categoryClicks.isNotEmpty) {
+    if (userProvider.hasPersonalizedTasteProfile) {
       _isNewUser = false;
       // Usuário com interesses: coloca as categorias favoritas primeiro
-      final topCats = user.topCategories;
-      final remaining =
-          _defaultCategoryOrder.where((c) => !topCats.contains(c)).toList();
-      _userCategories = [...topCats, ...remaining];
+      _userCategories =
+          _mergeCategoryOrder(userProvider.topCategoryPreferences);
     } else {
       _isNewUser = true;
-      _userCategories = List.from(_defaultCategoryOrder);
+      final trendingCategories = await _firestore.getTrendingCategories(
+        limit: _defaultCategoryOrder.length,
+        intent: AdModel.intentSell,
+      );
+      _userCategories = _mergeCategoryOrder(trendingCategories);
     }
 
     // Carrega em paralelo: recomendados + lojas + primeira categoria
@@ -704,6 +748,10 @@ class _ForYouScreenState extends State<ForYouScreen> {
   }
 
   bool _matchesSelectedLocation(AdModel ad) {
+    if (_isGuestDiscoveryMode) {
+      return true;
+    }
+
     return _matchesSelectedLocationRule(
       ad: ad,
       locationScope: widget.locationScope,
@@ -727,6 +775,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
   }
 
   String? _badgeLabelForAd() {
+    if (_isGuestDiscoveryMode) return null;
     if (widget.locationScope == 'state') return 'Na regiao';
     if (widget.locationScope == 'country') return 'Brasil';
     return null;
@@ -751,7 +800,6 @@ class _ForYouScreenState extends State<ForYouScreen> {
   void _navigateToAd(AdModel ad) {
     // Rastreia o clique na categoria
     context.read<UserProvider>().trackCategoryClick(ad.category);
-    _firestore.incrementAdClick(ad.id);
     Navigator.push(
       context,
       PageRouteBuilder(
@@ -770,6 +818,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
         builder: (_) => CategoryAdsScreen(
           category: category,
           icon: _getCategoryIcon(category),
+          ignoreLocationFilter: _isGuestDiscoveryMode,
           locationScope: widget.locationScope,
           locationRegionKey: widget.locationRegionKey,
           searchLat: widget.searchLat,
@@ -849,7 +898,12 @@ class _ForYouScreenState extends State<ForYouScreen> {
                       .animate()
                       .fadeIn(duration: 400.ms)
                       .slideX(begin: -0.08, end: 0),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 14),
+                  _HomePromoBanner(isDark: isDark)
+                      .animate(delay: 70.ms)
+                      .fadeIn(duration: 420.ms)
+                      .slideY(begin: 0.08, end: 0),
+                  const SizedBox(height: 14),
                   Text(
                     headerSubtitle,
                     style: GoogleFonts.montserrat(
@@ -917,6 +971,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
                           topCategories: _isNewUser
                               ? []
                               : _userCategories.take(3).toList(),
+                          ignoreLocationFilter: _isGuestDiscoveryMode,
                           locationScope: widget.locationScope,
                           locationRegionKey: widget.locationRegionKey,
                           searchLat: widget.searchLat,
@@ -1388,6 +1443,8 @@ class _ForYouScreenState extends State<ForYouScreen> {
       case 'Servicos pet':
       case 'Animais':
         return Icons.pets_rounded;
+      case 'Vaga de emprego':
+        return Icons.work_outline_rounded;
       case 'Outros servicos':
         return Icons.miscellaneous_services_rounded;
       default:
@@ -1428,5 +1485,119 @@ class _ForYouScreenState extends State<ForYouScreen> {
     }
 
     return filtered;
+  }
+}
+
+class _HomePromoBanner extends StatefulWidget {
+  const _HomePromoBanner({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  State<_HomePromoBanner> createState() => _HomePromoBannerState();
+}
+
+class _HomePromoBannerState extends State<_HomePromoBanner> {
+  late final PageController _pageController;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(viewportFraction: 1);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor =
+        widget.isDark ? AppTheme.blackBorder : const Color(0xFFE1E7EF);
+    final shadowColor = widget.isDark
+        ? Colors.black.withValues(alpha: 0.2)
+        : const Color(0xFF0F172A).withValues(alpha: 0.08);
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: shadowColor,
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: AspectRatio(
+          aspectRatio: 16 / 6,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              PageView.builder(
+                controller: _pageController,
+                itemCount: _promoBannerAssets.length,
+                onPageChanged: (index) {
+                  if (!mounted) return;
+                  setState(() => _currentPage = index);
+                },
+                itemBuilder: (context, index) {
+                  return Image.asset(
+                    _promoBannerAssets[index],
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: widget.isDark
+                          ? const Color(0xFF131922)
+                          : const Color(0xFFF3F6FA),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Banner ${index + 1}',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: widget.isDark
+                              ? Colors.white70
+                              : const Color(0xFF334155),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 12,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(_promoBannerAssets.length, (index) {
+                    final selected = index == _currentPage;
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      width: selected ? 18 : 7,
+                      height: 7,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? Colors.white
+                            : Colors.white.withValues(alpha: 0.46),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -12,9 +12,11 @@ import 'widgets/launch_splash_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final firebaseInitialization = Firebase.initializeApp(
+  final firebaseApp = await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  final userProvider = UserProvider();
+  await userProvider.initialize();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -27,9 +29,11 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider.value(value: userProvider),
       ],
-      child: MarketViewApp(firebaseInitialization: firebaseInitialization),
+      child: MarketViewApp(
+        firebaseInitialization: Future<FirebaseApp>.value(firebaseApp),
+      ),
     ),
   );
 }

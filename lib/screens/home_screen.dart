@@ -34,7 +34,6 @@ import '../services/auth_service.dart';
 import '../providers/user_provider.dart';
 import '../models/user_model.dart';
 import 'seller_profile_screen.dart';
-import '../services/location_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -81,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _locationInitialized = false;
   String _searchQuery = '';
   List<UserModel> _userSearchSuggestions = [];
+  List<StoreModel> _storeSearchSuggestions = [];
   bool _isLoadingUserSearch = false;
   String _locationLabel = 'Campo MourÃ£o, PR Â· 50km';
   String _locationScope = 'city';
@@ -142,7 +142,9 @@ class _HomeScreenState extends State<HomeScreen>
     final lat = user?.address.lat ?? _campoMouraoLat;
     final lng = user?.address.lng ?? _campoMouraoLng;
     final radius = user?.searchRadius ?? 50;
-    final baseLabel = (user != null && user.address.city.isNotEmpty && user.address.state.isNotEmpty)
+    final baseLabel = (user != null &&
+            user.address.city.isNotEmpty &&
+            user.address.state.isNotEmpty)
         ? '${user.address.city}, ${user.address.state}'
         : 'Campo Mourao, PR';
 
@@ -151,7 +153,8 @@ class _HomeScreenState extends State<HomeScreen>
     _searchRadiusKm = radius;
     _locationLabel = user == null ? 'Brasil' : '$baseLabel - ${radius}km';
     _locationScope = user == null ? 'country' : 'city';
-    _locationRegionKey = _normalizeRegionValue(user?.address.city ?? 'campo mourao');
+    _locationRegionKey =
+        _normalizeRegionValue(user?.address.city ?? 'campo mourao');
     _locationInitialized = true;
     _maybePromptPendingReview();
   }
@@ -174,22 +177,17 @@ class _HomeScreenState extends State<HomeScreen>
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      
-      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
         final position = await Geolocator.getCurrentPosition();
         final point = LatLng(position.latitude, position.longitude);
-        final cityLabel = await LocationService.reverseGeocodeCityLabel(point);
-        
+
         if (mounted) {
           setState(() {
             _searchLat = point.latitude;
             _searchLng = point.longitude;
-            _searchRadiusKm = 300;
-            _locationLabel = '$cityLabel - 300km';
-            _locationScope = 'city';
-            _locationRegionKey = _normalizeRegionValue(cityLabel.split(',').first);
           });
-          _loadAds();
         }
       }
     } catch (_) {}
@@ -224,6 +222,7 @@ class _HomeScreenState extends State<HomeScreen>
       _isSearching = false;
       _searchQuery = '';
       _userSearchSuggestions = [];
+      _storeSearchSuggestions = [];
       _isLoadingUserSearch = false;
       _searchController.clear();
       _marketplaceChromeOffset.value = 0;
@@ -243,6 +242,7 @@ class _HomeScreenState extends State<HomeScreen>
         offset: _searchController.text.length,
       );
       _userSearchSuggestions = [];
+      _storeSearchSuggestions = [];
       _isSearching = false;
     });
 
@@ -252,6 +252,7 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (_) => SearchResultsScreen(
           initialQuery: trimmed,
           ads: _realAds,
+          stores: _realStores,
           filters: _filters,
           locationScope: _locationScope,
           locationRegionKey: _locationRegionKey,
@@ -270,6 +271,7 @@ class _HomeScreenState extends State<HomeScreen>
       _searchQuery = value;
       if (trimmed.isEmpty) {
         _userSearchSuggestions = [];
+        _storeSearchSuggestions = [];
         _isLoadingUserSearch = false;
       } else {
         _isLoadingUserSearch = true;
@@ -278,13 +280,95 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (trimmed.isEmpty) return;
 
-    final suggestions = await _firestore.searchUsersByName(trimmed, limit: 3);
+    final results = await Future.wait([
+      _firestore.searchUsersByName(trimmed, limit: 3),
+      _firestore.searchStoresByName(trimmed, limit: 4),
+    ]);
     if (!mounted || _searchController.text.trim() != trimmed) return;
 
     setState(() {
-      _userSearchSuggestions = suggestions;
+      _userSearchSuggestions = results[0] as List<UserModel>;
+      _storeSearchSuggestions = _mergeStoreSuggestions(
+        trimmed,
+        remoteResults: results[1] as List<StoreModel>,
+        limit: 4,
+      );
       _isLoadingUserSearch = false;
     });
+  }
+
+  List<StoreModel> _mergeStoreSuggestions(
+    String query, {
+    required List<StoreModel> remoteResults,
+    int limit = 4,
+  }) {
+    final byId = <String, StoreModel>{};
+    for (final store in remoteResults) {
+      if (store.id.trim().isNotEmpty) {
+        byId[store.id] = store;
+      }
+    }
+    for (final store in _localStoreSuggestions(query, limit: limit)) {
+      if (store.id.trim().isNotEmpty) {
+        byId.putIfAbsent(store.id, () => store);
+      }
+    }
+
+    final ranked = byId.values.toList()
+      ..sort((a, b) {
+        final scoreCompare =
+            _storeSuggestionScore(b, query).compareTo(_storeSuggestionScore(a, query));
+        if (scoreCompare != 0) return scoreCompare;
+        return b.rating.compareTo(a.rating);
+      });
+    return ranked.take(limit).toList();
+  }
+
+  List<StoreModel> _localStoreSuggestions(String query, {int limit = 4}) {
+    final normalizedQuery = AdModel.normalizeValue(query);
+    if (normalizedQuery.isEmpty) return const [];
+
+    final ranked = _realStores
+        .where((store) => store.isActive)
+        .map((store) => MapEntry(store, _storeSuggestionScore(store, query)))
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return ranked.take(limit).map((entry) => entry.key).toList();
+  }
+
+  int _storeSuggestionScore(StoreModel store, String query) {
+    final normalizedQuery = AdModel.normalizeValue(query).trim();
+    if (normalizedQuery.isEmpty) return 0;
+
+    final terms = normalizedQuery
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((term) => term.isNotEmpty)
+        .toList(growable: false);
+    final name = AdModel.normalizeValue(store.name);
+    final category = AdModel.normalizeValue(store.category);
+    final description = AdModel.normalizeValue(store.description);
+    final city = AdModel.normalizeValue(store.address.city);
+    final state = AdModel.normalizeValue(store.address.state);
+
+    var score = 0;
+    if (name == normalizedQuery) score += 220;
+    if (name.startsWith(normalizedQuery)) score += 160;
+    if (name.contains(normalizedQuery)) score += 110;
+    if (category.contains(normalizedQuery)) score += 40;
+    if (description.contains(normalizedQuery)) score += 22;
+    if (city.contains(normalizedQuery) || state.contains(normalizedQuery)) {
+      score += 14;
+    }
+
+    for (final term in terms) {
+      if (name.contains(term)) score += 18;
+      if (category.contains(term)) score += 12;
+      if (description.contains(term)) score += 6;
+    }
+
+    return score;
   }
 
   void _setSelectedSection(
@@ -916,7 +1000,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (query.isEmpty) {
       return Center(
         child: Text(
-          'Digite para buscar usuarios e anuncios',
+          'Digite para buscar anuncios, lojas e perfis',
           style: GoogleFonts.roboto(
             color: Colors.grey,
             fontSize: 14,
@@ -968,6 +1052,106 @@ class _HomeScreenState extends State<HomeScreen>
             onTap: () => _commitSearchSuggestion(suggestion),
           ),
         ),
+        if (_storeSearchSuggestions.isNotEmpty) const SizedBox(height: 10),
+        if (_storeSearchSuggestions.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Lojas',
+              style: GoogleFonts.roboto(
+                color: Colors.grey,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          ..._storeSearchSuggestions.map(
+            (store) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: borderColor),
+                ),
+                tileColor: cardColor,
+                leading: CircleAvatar(
+                  backgroundColor:
+                      AppTheme.facebookBlue.withValues(alpha: 0.12),
+                  backgroundImage: store.logo != null &&
+                          store.logo!.trim().isNotEmpty
+                      ? NetworkImage(store.logo!)
+                      : null,
+                  child: store.logo == null || store.logo!.trim().isEmpty
+                      ? const Icon(
+                          Icons.storefront_rounded,
+                          color: AppTheme.facebookBlue,
+                        )
+                      : null,
+                ),
+                title: Text(
+                  store.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.roboto(
+                    color: textColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  store.address.city.isNotEmpty
+                      ? '${AdModel.displayLabel(store.category)} · ${store.address.city}, ${store.address.state}'
+                      : AdModel.displayLabel(store.category),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.roboto(
+                    color: Colors.grey,
+                    fontSize: 12.5,
+                  ),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      size: 16,
+                      color: Color(0xFFF4B400),
+                    ),
+                    const SizedBox(width: 2),
+                    Text(
+                      store.totalReviews > 0
+                          ? store.rating.toStringAsFixed(1)
+                          : '--',
+                      style: GoogleFonts.roboto(
+                        color: textColor,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                onTap: () {
+                  FocusScope.of(context).unfocus();
+                  setState(() {
+                    _isSearching = false;
+                    _userSearchSuggestions = [];
+                    _storeSearchSuggestions = [];
+                  });
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SellerProfileScreen(
+                        sellerId: store.ownerId,
+                        sellerName: store.name,
+                        storeId: store.id,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
         if (_userSearchSuggestions.isNotEmpty) const SizedBox(height: 10),
         if (_userSearchSuggestions.isNotEmpty) ...[
           Padding(
@@ -1032,6 +1216,7 @@ class _HomeScreenState extends State<HomeScreen>
                   setState(() {
                     _isSearching = false;
                     _userSearchSuggestions = [];
+                    _storeSearchSuggestions = [];
                   });
                   Navigator.push(
                     context,
@@ -1100,7 +1285,7 @@ class _HomeScreenState extends State<HomeScreen>
       case 3:
         return const ChatScreen();
       case 4:
-        return const ProfileScreen();
+        return const ProfileScreen(showAppBar: false);
       default:
         return _buildHomeContent();
     }
@@ -1262,13 +1447,19 @@ class _HomeScreenState extends State<HomeScreen>
       },
       child: Scaffold(
         backgroundColor: bg,
-        appBar: (_selectedNavIndex == 3 || _selectedNavIndex == 4)
+        appBar: (_selectedNavIndex == 3)
             ? null
             : (_isSearching
                 ? _buildSearchBar(isDark)
                 : MarketViewTopBar(
                     onMenuTap: _toggleDrawer,
-                    onSearchTap: _openSearch,
+                    onSearchTap: () {
+                      if (_selectedNavIndex != 0) {
+                        setState(() => _selectedNavIndex = 0);
+                      }
+                      _setSelectedSection(0, animate: false);
+                      _openSearch();
+                    },
                     onLogoTap: () {
                       FocusScope.of(context).unfocus();
                       setState(() {
@@ -2182,6 +2373,8 @@ class _HomeScreenState extends State<HomeScreen>
         return Icons.handyman_rounded;
       case 'Saude e bem-estar':
         return Icons.health_and_safety_rounded;
+      case 'Vaga de emprego':
+        return Icons.work_outline_rounded;
       case 'Outros servicos':
         return Icons.miscellaneous_services_rounded;
       default:
@@ -2556,13 +2749,15 @@ class _HomeScreenState extends State<HomeScreen>
                         MaterialPageRoute(builder: (_) => const MyAdsScreen()),
                       ))),
               _drawerItem(Icons.favorite_outline_rounded, 'Favoritos',
-                  textColor, subColor, onTap: () => _handleAuthRequired(() {
-                setState(() => _selectedNavIndex = 0);
-                _setSelectedSection(6);
-              })),
+                  textColor, subColor,
+                  onTap: () => _handleAuthRequired(() {
+                        setState(() => _selectedNavIndex = 0);
+                        _setSelectedSection(6);
+                      })),
               _drawerItem(Icons.chat_bubble_outline_rounded, 'Mensagens',
                   textColor, subColor,
-                  onTap: () => _handleAuthRequired(() => setState(() => _selectedNavIndex = 3))),
+                  onTap: () => _handleAuthRequired(
+                      () => setState(() => _selectedNavIndex = 3))),
               _drawerItem(
                   Icons.settings_outlined, 'Configurações', textColor, subColor,
                   onTap: () => _handleAuthRequired(() => Navigator.push(
@@ -2756,25 +2951,25 @@ class _HomeScreenState extends State<HomeScreen>
           final isActive = _selectedNavIndex == index;
 
           return Expanded(
-              child: InkWell(
-                onTap: () {
-                  if (index == 3) {
-                    _handleAuthRequired(() {
-                      if (_isDrawerOpen) {
-                        _toggleDrawer();
-                      }
-                      setState(() => _selectedNavIndex = index);
-                    });
-                    return;
-                  }
-                  
-                  if (_isDrawerOpen) {
-                    _toggleDrawer();
-                  }
-                  setState(() => _selectedNavIndex = index);
-                  if (index == 0) _setSelectedSection(0);
-                  if (index == 1) _openSearch();
-                },
+            child: InkWell(
+              onTap: () {
+                if (index == 3) {
+                  _handleAuthRequired(() {
+                    if (_isDrawerOpen) {
+                      _toggleDrawer();
+                    }
+                    setState(() => _selectedNavIndex = index);
+                  });
+                  return;
+                }
+
+                if (_isDrawerOpen) {
+                  _toggleDrawer();
+                }
+                setState(() => _selectedNavIndex = index);
+                if (index == 0) _setSelectedSection(0);
+                if (index == 1) _openSearch();
+              },
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

@@ -791,6 +791,8 @@ class _EditAdScreenState extends State<EditAdScreen> {
             : null,
         'propertyFurnishing':
             _isPropertyProduct ? _selectedPropertyFurnishing : null,
+        'customAttributes':
+            widget.ad.customAttributes.map((item) => item.toMap()).toList(),
         'images': [..._existingImages, ...newImageUrls],
         'imagePublicIds': [..._existingPublicIds, ...newPublicIds],
         'location': _locationCtrl.text.trim().isNotEmpty
@@ -1409,6 +1411,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
       propertyParkingSpots: int.tryParse(_propertyParkingCtrl.text.trim()),
       propertyFurnishing:
           _isPropertyProduct ? _selectedPropertyFurnishing : null,
+      customAttributes: widget.ad.customAttributes,
       km: int.tryParse(_kmCtrl.text.replaceAll('.', '')),
       vehicleBrand: _vehicleBrandCtrl.text.trim(),
       vehicleModel: _vehicleModelCtrl.text.trim(),
@@ -1456,6 +1459,9 @@ class _EditAdScreenState extends State<EditAdScreen> {
               .map((entry) => _summaryRow(entry.key, entry.value, isDark)),
         if (_isVehicleProduct)
           ...previewAd.vehicleDetailEntries
+              .map((entry) => _summaryRow(entry.key, entry.value, isDark)),
+        if (previewAd.customAttributeEntries.isNotEmpty)
+          ...previewAd.customAttributeEntries
               .map((entry) => _summaryRow(entry.key, entry.value, isDark)),
       ],
     );
