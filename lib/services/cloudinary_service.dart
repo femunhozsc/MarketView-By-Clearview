@@ -1,24 +1,38 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:image_picker/image_picker.dart';
+
+import '../screens/photo_gallery_picker_screen.dart';
 import '../theme/app_theme.dart';
 
 class CloudinaryService {
-  // Substitua pelos seus dados do Cloudinary
-  static const String cloudName = 'dm40f9nsf';
-  static const String uploadPreset = 'marketview_preset'; // crie um preset unsigned no Cloudinary
+  static const String cloudName = String.fromEnvironment(
+    'CLOUDINARY_CLOUD_NAME',
+    defaultValue: 'dm40f9nsf',
+  );
+  static const String uploadPreset = String.fromEnvironment(
+    'CLOUDINARY_UPLOAD_PRESET',
+    defaultValue: 'marketview_preset',
+  );
+
+  bool get isConfigured =>
+      cloudName.trim().isNotEmpty && uploadPreset.trim().isNotEmpty;
 
   final ImagePicker _picker = ImagePicker();
   final ImageCropper _cropper = ImageCropper();
 
-  /// Upload genérico para Cloudinary com compactação via transformações.
-  /// Retorna um Map com 'url' e 'publicId' para permitir deleção futura.
   Future<Map<String, String>?> uploadImage(File file, {String? folder}) async {
+    if (!isConfigured) {
+      debugPrint('Cloudinary upload ignorado: configuracao ausente.');
+      return null;
+    }
     try {
-      final uri = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+      final uri =
+          Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
       final request = http.MultipartRequest('POST', uri)
         ..fields['upload_preset'] = uploadPreset
         ..files.add(await http.MultipartFile.fromPath('file', file.path));
@@ -27,22 +41,25 @@ class CloudinaryService {
         request.fields['folder'] = folder;
       }
 
-      // Transformações de compactação no upload:
-      // - quality auto:good → Cloudinary escolhe a melhor compactação
-      // - format auto → converte para WebP/AVIF quando o navegador suporta
-      // - width 1200 → limita largura máxima a 1200px (suficiente para mobile)
-      request.fields['transformation'] = 'q_auto:good,f_auto,w_1200,c_limit';
-
       final response = await request.send();
+      final responseData = await response.stream.bytesToString();
       if (response.statusCode == 200) {
-        final responseData = await response.stream.bytesToString();
         final json = Map<String, dynamic>.from(jsonDecode(responseData));
+        final secureUrl = (json['secure_url'] ?? json['url']) as String?;
+        final publicId = json['public_id'] as String?;
+        if (secureUrl == null || secureUrl.isEmpty || publicId == null) {
+          debugPrint('Cloudinary upload respondeu sem URL/public_id: $json');
+          return null;
+        }
         return {
-          'url': json['secure_url'] as String,
-          'publicId': json['public_id'] as String,
+          'url': secureUrl,
+          'publicId': publicId,
         };
       }
-      debugPrint('Cloudinary upload falhou: status ${response.statusCode}');
+
+      debugPrint(
+        'Cloudinary upload falhou: status ${response.statusCode} body: $responseData',
+      );
       return null;
     } catch (e) {
       debugPrint('Cloudinary upload erro: $e');
@@ -50,19 +67,18 @@ class CloudinaryService {
     }
   }
 
-  /// Upload simples que retorna apenas a URL (compatibilidade)
   Future<String?> uploadImageUrl(File file, {String? folder}) async {
     final result = await uploadImage(file, folder: folder);
     return result?['url'];
   }
 
-  /// Deleta uma imagem do Cloudinary pelo publicId.
-  /// NOTA: Deleção via unsigned request requer habilitar "Allow unsigned
-  /// destroy" nas configurações do Cloudinary, ou usar uma Cloud Function.
-  /// A melhor alternativa é usar Firebase Cloud Functions como proxy.
   Future<bool> deleteImage(String publicId) async {
+    if (!isConfigured) {
+      return false;
+    }
     try {
-      final uri = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/destroy');
+      final uri =
+          Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/destroy');
       final response = await http.post(uri, body: {
         'public_id': publicId,
         'upload_preset': uploadPreset,
@@ -79,58 +95,97 @@ class CloudinaryService {
     }
   }
 
-  /// Deleta múltiplas imagens de uma vez
   Future<void> deleteImages(List<String> publicIds) async {
     for (final id in publicIds) {
       await deleteImage(id);
     }
   }
 
-  // Upload foto de perfil
+  Future<bool> deleteImageByUrl(String url) async {
+    final publicId = publicIdFromUrl(url);
+    if (publicId == null || publicId.isEmpty) return false;
+    return deleteImage(publicId);
+  }
+
+  String? publicIdFromUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.host.contains('cloudinary.com')) {
+      return null;
+    }
+
+    final segments = uri.pathSegments;
+    final uploadIndex = segments.indexOf('upload');
+    if (uploadIndex == -1 || uploadIndex + 1 >= segments.length) {
+      return null;
+    }
+
+    var startIndex = uploadIndex + 1;
+    if (segments[startIndex].startsWith('v')) {
+      startIndex++;
+    }
+    if (startIndex >= segments.length) return null;
+
+    final publicIdWithExtension = segments.sublist(startIndex).join('/');
+    final dotIndex = publicIdWithExtension.lastIndexOf('.');
+    if (dotIndex == -1) return publicIdWithExtension;
+    return publicIdWithExtension.substring(0, dotIndex);
+  }
+
   Future<String?> uploadProfilePhoto(String uid, File file) async {
     return uploadImageUrl(file, folder: 'users/$uid');
   }
 
-  // Upload logo da loja
   Future<String?> uploadStoreLogo(String storeId, File file) async {
     return uploadImageUrl(file, folder: 'stores/$storeId');
   }
 
-  // Upload banner da loja
   Future<String?> uploadStoreBanner(String storeId, File file) async {
     return uploadImageUrl(file, folder: 'stores/$storeId');
   }
 
-  // Upload foto de anúncio — retorna Map com url e publicId
-  Future<Map<String, String>?> uploadAdPhotoFull(String adId, File file, int index) async {
+  Future<Map<String, String>?> uploadAdPhotoFull(
+    String adId,
+    File file,
+    int index,
+  ) async {
     return uploadImage(file, folder: 'ads/$adId');
   }
 
-  // Upload foto de anúncio — retorna apenas URL (compatibilidade)
   Future<String?> uploadAdPhoto(String adId, File file, int index) async {
     return uploadImageUrl(file, folder: 'ads/$adId');
   }
 
-  // Selecionar imagem da galeria com corte opcional
   Future<File?> pickAndCropImage({
     required BuildContext context,
     bool camera = false,
     CropAspectRatio? aspectRatio,
     String title = 'Recortar Imagem',
   }) async {
-    final XFile? picked = await _picker.pickImage(
-      source: camera ? ImageSource.camera : ImageSource.gallery,
-      maxWidth: 1200, // Limita resolução antes do upload
-      maxHeight: 1200,
-      imageQuality: 75, // Compactação local antes de enviar
-    );
-    
-    if (picked == null) return null;
+    String? selectedPath;
+    if (camera) {
+      final picked = await _picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 75,
+      );
+      selectedPath = picked?.path;
+    } else {
+      final files = await PhotoGalleryPickerScreen.pick(
+        context,
+        title: 'Galeria de fotos',
+      );
+      if (files.isNotEmpty) {
+        selectedPath = files.first.path;
+      }
+    }
+
+    if (selectedPath == null) return null;
 
     final croppedFile = await _cropper.cropImage(
-      sourcePath: picked.path,
+      sourcePath: selectedPath,
       aspectRatio: aspectRatio,
-      compressQuality: 80, // Compactação adicional no crop
+      compressQuality: 80,
       uiSettings: [
         AndroidUiSettings(
           toolbarTitle: title,
@@ -153,13 +208,52 @@ class CloudinaryService {
     return File(croppedFile.path);
   }
 
-  // Selecionar múltiplas imagens
-  Future<List<File>> pickMultipleImages({int max = 10}) async {
-    final List<XFile> picked = await _picker.pickMultiImage(
-      maxWidth: 1200,
-      maxHeight: 1200,
-      imageQuality: 75,
+  Future<File?> cropImageFreely({
+    required String path,
+    String title = 'Recortar imagem',
+  }) async {
+    final croppedFile = await _cropper.cropImage(
+      sourcePath: path,
+      compressQuality: 80,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: title,
+          toolbarColor: AppTheme.facebookBlue,
+          toolbarWidgetColor: Colors.white,
+          initAspectRatio: CropAspectRatioPreset.original,
+          lockAspectRatio: false,
+          hideBottomControls: false,
+          activeControlsWidgetColor: AppTheme.facebookBlue,
+        ),
+        IOSUiSettings(
+          title: title,
+          cancelButtonTitle: 'Cancelar',
+          doneButtonTitle: 'Concluir',
+          aspectRatioLockEnabled: false,
+          resetAspectRatioEnabled: true,
+        ),
+      ],
     );
-    return picked.take(max).map((e) => File(e.path)).toList();
+
+    if (croppedFile == null) return null;
+    return File(croppedFile.path);
+  }
+
+  Future<List<File>> pickImagesFromGallery(
+    BuildContext context, {
+    int max = 10,
+  }) async {
+    return PhotoGalleryPickerScreen.pick(
+      context,
+      maxSelection: max,
+      title: 'Galeria de fotos',
+    );
+  }
+
+  Future<List<File>> pickMultipleImages(
+    BuildContext context, {
+    int max = 10,
+  }) async {
+    return pickImagesFromGallery(context, max: max);
   }
 }

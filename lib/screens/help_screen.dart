@@ -80,7 +80,7 @@ class _HelpScreenState extends State<HelpScreen> {
         ),
         title: Text(
           'Ajuda e suporte',
-          style: GoogleFonts.outfit(color: textColor, fontSize: 20, fontWeight: FontWeight.w800),
+          style: GoogleFonts.roboto(color: textColor, fontSize: 20, fontWeight: FontWeight.w800),
         ),
       ),
       body: ListView(
@@ -90,7 +90,7 @@ class _HelpScreenState extends State<HelpScreen> {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
+              gradient: const LinearGradient(
                 colors: [
                   AppTheme.facebookBlue,
                   AppTheme.facebookBlueDark,
@@ -101,7 +101,7 @@ class _HelpScreenState extends State<HelpScreen> {
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: AppTheme.facebookBlue.withOpacity(0.3),
+                  color: AppTheme.facebookBlue.withValues(alpha: 0.3),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
@@ -114,14 +114,14 @@ class _HelpScreenState extends State<HelpScreen> {
                 const SizedBox(height: 10),
                 Text(
                   'Precisa de ajuda?',
-                  style: GoogleFonts.outfit(
+                  style: GoogleFonts.roboto(
                     color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Nossa equipe está disponível para ajudar você com qualquer dúvida ou problema.',
-                  style: GoogleFonts.outfit(
-                    color: Colors.white.withOpacity(0.85), fontSize: 13, height: 1.5),
+                  style: GoogleFonts.roboto(
+                    color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.5),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -147,7 +147,7 @@ class _HelpScreenState extends State<HelpScreen> {
 
           Text(
             'PERGUNTAS FREQUENTES',
-            style: GoogleFonts.outfit(
+            style: GoogleFonts.roboto(
               color: isDark ? AppTheme.whiteMuted : Colors.grey.shade500,
               fontSize: 11,
               fontWeight: FontWeight.w700,
@@ -188,7 +188,7 @@ class _HelpScreenState extends State<HelpScreen> {
           // Links rápidos
           Text(
             'LINKS ÚTEIS',
-            style: GoogleFonts.outfit(
+            style: GoogleFonts.roboto(
               color: isDark ? AppTheme.whiteMuted : Colors.grey.shade500,
               fontSize: 11,
               fontWeight: FontWeight.w700,
@@ -252,15 +252,15 @@ class _HelpScreenState extends State<HelpScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.2),
+          color: Colors.white.withValues(alpha: 0.2),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white.withOpacity(0.3)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
         ),
         child: Row(
           children: [
             Icon(icon, color: Colors.white, size: 18),
             const SizedBox(width: 8),
-            Text(label, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            Text(label, style: GoogleFonts.roboto(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -284,14 +284,14 @@ class _HelpScreenState extends State<HelpScreen> {
             Container(
               width: 36, height: 36,
               decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.1),
+                color: iconColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, color: iconColor, size: 20),
             ),
             const SizedBox(width: 14),
             Expanded(
-              child: Text(label, style: GoogleFonts.outfit(
+              child: Text(label, style: GoogleFonts.roboto(
                   color: textColor, fontSize: 14, fontWeight: FontWeight.w500)),
             ),
             Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 20),
@@ -335,7 +335,7 @@ class _FaqTileState extends State<_FaqTile> {
                 Expanded(
                   child: Text(
                     widget.item.question,
-                    style: GoogleFonts.outfit(
+                    style: GoogleFonts.roboto(
                       color: widget.textColor,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -361,7 +361,7 @@ class _FaqTileState extends State<_FaqTile> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Text(
               widget.item.answer,
-              style: GoogleFonts.outfit(
+              style: GoogleFonts.roboto(
                 color: widget.isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
                 fontSize: 13,
                 height: 1.6,

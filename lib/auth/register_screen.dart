@@ -11,7 +11,6 @@ import '../services/auth_service.dart';
 import '../services/cep_service.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
-import '../store/create_store_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -100,7 +99,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _finishRegistration({required bool createStore}) async {
     setState(() => _isLoading = true);
     try {
-      // 1. Cria conta no Firebase Auth
       final result = await _authService.register(
         email: _email,
         password: _password,
@@ -110,7 +108,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      // 2. Salva dados no Firestore
+      await result.user!.updateDisplayName('$_firstName $_lastName'.trim());
+
       final user = UserModel(
         uid: result.user!.uid,
         firstName: _firstName,
@@ -120,35 +119,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
         phone: _phone,
         address: _address,
         searchRadius: _searchRadius,
+        emailVerificationRequired: true,
         createdAt: DateTime.now(),
       );
       await _firestoreService.createUser(user);
+      // await result.user!.sendEmailVerification();
+      // await _authService.logout();
+      // if (mounted) context.read<UserProvider>().clear();
 
-      // 3. Atualiza provider
-      if (mounted) context.read<UserProvider>().setUser(user);
-
-      // 4. Navega para criar loja ou para home
       if (mounted) {
-        if (createStore) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => CreateStoreScreen(userId: result.user!.uid),
-            ),
-          );
-        } else {
-          Navigator.of(context).popUntil((r) => r.isFirst);
-        }
+        final message = createStore
+            ? 'Conta criada com sucesso! Você já pode criar sua loja.'
+            : 'Conta criada com sucesso!';
+        _showSuccess(message);
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        if (!mounted) return;
+        Navigator.of(context).popUntil((r) => r.isFirst);
       }
+    } catch (_) {
+      _showError('Nao foi possivel concluir seu cadastro agora.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  void _showSuccess(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: GoogleFonts.roboto(color: Colors.white)),
+        backgroundColor: AppTheme.success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg, style: GoogleFonts.outfit(color: Colors.white)),
+        content: Text(msg, style: GoogleFonts.roboto(color: Colors.white)),
         backgroundColor: AppTheme.error,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -188,7 +197,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           children: [
             Text(
               'Criar conta',
-              style: GoogleFonts.outfit(
+              style: GoogleFonts.roboto(
                 color: textColor,
                 fontWeight: FontWeight.w700,
                 fontSize: 17,
@@ -197,7 +206,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const SizedBox(height: 2),
             Text(
               'Passo ${_currentPage + 1} de 4',
-              style: GoogleFonts.outfit(
+              style: GoogleFonts.roboto(
                 color: Colors.grey,
                 fontSize: 12,
               ),
@@ -256,7 +265,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             isDark: isDark,
             firstName: _firstName,
             isLoading: _isLoading,
-            onDecide: (createStore) => _finishRegistration(createStore: createStore),
+            onDecide: (createStore) =>
+                _finishRegistration(createStore: createStore),
           ),
         ],
       ),
@@ -293,7 +303,8 @@ class _Step1 extends StatefulWidget {
   final MaskTextInputFormatter cpfMask;
   final Function(String, String, String) onNext;
 
-  const _Step1({required this.isDark, required this.cpfMask, required this.onNext});
+  const _Step1(
+      {required this.isDark, required this.cpfMask, required this.onNext});
 
   @override
   State<_Step1> createState() => _Step1State();
@@ -316,11 +327,13 @@ class _Step1State extends State<_Step1> {
           children: [
             const SizedBox(height: 8),
             _stepTitle('Seus dados pessoais', widget.isDark)
-                .animate().fadeIn().slideY(begin: -0.1, end: 0),
+                .animate()
+                .fadeIn()
+                .slideY(begin: -0.1, end: 0),
             _stepSubtitle('Informe seu nome completo e CPF.', widget.isDark)
-                .animate(delay: 60.ms).fadeIn(),
+                .animate(delay: 60.ms)
+                .fadeIn(),
             const SizedBox(height: 32),
-
             _field(
               ctrl: _firstCtrl,
               label: 'Nome',
@@ -336,7 +349,8 @@ class _Step1State extends State<_Step1> {
               hint: 'Ex: Silva',
               isDark: widget.isDark,
               delay: 160,
-              validator: (v) => v!.trim().isEmpty ? 'Informe o sobrenome' : null,
+              validator: (v) =>
+                  v!.trim().isEmpty ? 'Informe o sobrenome' : null,
             ),
             const SizedBox(height: 16),
             _field(
@@ -353,7 +367,6 @@ class _Step1State extends State<_Step1> {
               },
             ),
             const SizedBox(height: 40),
-
             _nextButton(
               label: 'Continuar',
               isDark: widget.isDark,
@@ -381,7 +394,8 @@ class _Step2 extends StatefulWidget {
   final MaskTextInputFormatter phoneMask;
   final Function(String, String, String) onNext;
 
-  const _Step2({required this.isDark, required this.phoneMask, required this.onNext});
+  const _Step2(
+      {required this.isDark, required this.phoneMask, required this.onNext});
 
   @override
   State<_Step2> createState() => _Step2State();
@@ -407,10 +421,11 @@ class _Step2State extends State<_Step2> {
           children: [
             const SizedBox(height: 8),
             _stepTitle('Acesso e contato', widget.isDark).animate().fadeIn(),
-            _stepSubtitle('Esses dados serão usados para entrar no app.', widget.isDark)
-                .animate(delay: 60.ms).fadeIn(),
+            _stepSubtitle(
+              'Esses dados serao usados para entrar no app. Enviaremos um e-mail de verificacao ao finalizar.',
+              widget.isDark,
+            ).animate(delay: 60.ms).fadeIn(),
             const SizedBox(height: 32),
-
             _field(
               ctrl: _emailCtrl,
               label: 'E-mail',
@@ -418,8 +433,7 @@ class _Step2State extends State<_Step2> {
               isDark: widget.isDark,
               delay: 100,
               keyboardType: TextInputType.emailAddress,
-              validator: (v) =>
-                  !v!.contains('@') ? 'E-mail inválido' : null,
+              validator: (v) => !v!.contains('@') ? 'E-mail inválido' : null,
             ),
             const SizedBox(height: 16),
             _field(
@@ -431,14 +445,15 @@ class _Step2State extends State<_Step2> {
               obscure: !_showPass,
               suffix: IconButton(
                 icon: Icon(
-                  _showPass ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                  _showPass
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
                   color: Colors.grey,
                   size: 20,
                 ),
                 onPressed: () => setState(() => _showPass = !_showPass),
               ),
-              validator: (v) =>
-                  v!.length < 6 ? 'Mínimo 6 caracteres' : null,
+              validator: (v) => v!.length < 6 ? 'Mínimo 6 caracteres' : null,
             ),
             const SizedBox(height: 16),
             _field(
@@ -450,7 +465,9 @@ class _Step2State extends State<_Step2> {
               obscure: !_showConfirm,
               suffix: IconButton(
                 icon: Icon(
-                  _showConfirm ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                  _showConfirm
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
                   color: Colors.grey,
                   size: 20,
                 ),
@@ -474,7 +491,6 @@ class _Step2State extends State<_Step2> {
               },
             ),
             const SizedBox(height: 40),
-
             _nextButton(
               label: 'Continuar',
               isDark: widget.isDark,
@@ -547,7 +563,8 @@ class _Step3State extends State<_Step3> {
     _streetCtrl = TextEditingController(text: widget.address.street);
     _numberCtrl = TextEditingController(text: widget.address.number);
     _complementCtrl = TextEditingController(text: widget.address.complement);
-    _neighborhoodCtrl = TextEditingController(text: widget.address.neighborhood);
+    _neighborhoodCtrl =
+        TextEditingController(text: widget.address.neighborhood);
     _cityCtrl = TextEditingController(text: widget.address.city);
     _stateCtrl = TextEditingController(text: widget.address.state);
   }
@@ -579,7 +596,8 @@ class _Step3State extends State<_Step3> {
 
   @override
   Widget build(BuildContext context) {
-    final border = widget.isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
+    final border =
+        widget.isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -710,8 +728,10 @@ class _Step3State extends State<_Step3> {
             // Mapa OpenStreetMap (gratuito)
             Text(
               'Sua localização no mapa',
-              style: GoogleFonts.outfit(
-                color: widget.isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
+              style: GoogleFonts.roboto(
+                color: widget.isDark
+                    ? AppTheme.whiteSecondary
+                    : Colors.grey.shade600,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -770,7 +790,7 @@ class _Step3State extends State<_Step3> {
               ),
               child: Text(
                 '📍 Toque no mapa para ajustar sua localização exata',
-                style: GoogleFonts.outfit(
+                style: GoogleFonts.roboto(
                   color: Colors.grey,
                   fontSize: 11,
                 ),
@@ -783,7 +803,7 @@ class _Step3State extends State<_Step3> {
             // Raio de busca
             Text(
               'Raio de busca — ${widget.searchRadius} km',
-              style: GoogleFonts.outfit(
+              style: GoogleFonts.roboto(
                 color: widget.isDark ? Colors.white : Colors.black87,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
@@ -791,7 +811,7 @@ class _Step3State extends State<_Step3> {
             ).animate(delay: 260.ms).fadeIn(),
             Text(
               'Ver anúncios em um raio de ${widget.searchRadius}km da sua localização',
-              style: GoogleFonts.outfit(color: Colors.grey, fontSize: 12),
+              style: GoogleFonts.roboto(color: Colors.grey, fontSize: 12),
             ),
             Slider(
               value: widget.searchRadius.toDouble(),
@@ -805,8 +825,12 @@ class _Step3State extends State<_Step3> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('5 km', style: GoogleFonts.outfit(color: Colors.grey, fontSize: 11)),
-                Text('500 km', style: GoogleFonts.outfit(color: Colors.grey, fontSize: 11)),
+                Text('5 km',
+                    style:
+                        GoogleFonts.roboto(color: Colors.grey, fontSize: 11)),
+                Text('500 km',
+                    style:
+                        GoogleFonts.roboto(color: Colors.grey, fontSize: 11)),
               ],
             ),
 
@@ -856,7 +880,7 @@ class _Step4 extends StatelessWidget {
             width: 90,
             height: 90,
             decoration: BoxDecoration(
-              color: AppTheme.facebookBlue.withOpacity(0.12),
+              color: AppTheme.facebookBlue.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -870,7 +894,7 @@ class _Step4 extends StatelessWidget {
 
           Text(
             'Bem-vindo, $firstName! 🎉',
-            style: GoogleFonts.outfit(
+            style: GoogleFonts.roboto(
               color: textColor,
               fontSize: 24,
               fontWeight: FontWeight.w800,
@@ -881,8 +905,8 @@ class _Step4 extends StatelessWidget {
           const SizedBox(height: 12),
 
           Text(
-            'Você gostaria de criar uma loja agora?\nCom uma loja você pode anunciar produtos e serviços com uma página personalizada.',
-            style: GoogleFonts.outfit(
+            'Sua conta sera criada com verificacao por e-mail.\nDepois de confirmar o e-mail, voce pode voltar para criar sua loja e continuar no app.',
+            style: GoogleFonts.roboto(
               color: Colors.grey,
               fontSize: 14,
               height: 1.5,
@@ -905,11 +929,12 @@ class _Step4 extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.store_rounded, color: Colors.white, size: 22),
+                  const Icon(Icons.store_rounded,
+                      color: Colors.white, size: 22),
                   const SizedBox(width: 10),
                   Text(
-                    'Criar loja agora',
-                    style: GoogleFonts.outfit(
+                    'Quero criar loja depois',
+                    style: GoogleFonts.roboto(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
@@ -932,14 +957,13 @@ class _Step4 extends StatelessWidget {
                 color: isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: isDark
-                      ? AppTheme.blackBorder
-                      : const Color(0xFFE0E0E0),
+                  color:
+                      isDark ? AppTheme.blackBorder : const Color(0xFFE0E0E0),
                 ),
               ),
               child: Text(
-                isLoading ? 'Aguarde...' : 'Agora não',
-                style: GoogleFonts.outfit(
+                isLoading ? 'Aguarde...' : 'Agora nao',
+                style: GoogleFonts.roboto(
                   color: isDark ? Colors.white : Colors.black87,
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -952,8 +976,8 @@ class _Step4 extends StatelessWidget {
           const SizedBox(height: 12),
 
           Text(
-            'Você pode criar sua loja a qualquer momento\nnas configurações do seu perfil',
-            style: GoogleFonts.outfit(color: Colors.grey, fontSize: 11),
+            'Depois de verificar o e-mail, voce pode criar sua loja\nnas configuracoes do seu perfil',
+            style: GoogleFonts.roboto(color: Colors.grey, fontSize: 11),
             textAlign: TextAlign.center,
           ).animate(delay: 400.ms).fadeIn(),
 
@@ -968,7 +992,7 @@ class _Step4 extends StatelessWidget {
 Widget _stepTitle(String text, bool isDark) {
   return Text(
     text,
-    style: GoogleFonts.outfit(
+    style: GoogleFonts.roboto(
       color: isDark ? Colors.white : Colors.black87,
       fontSize: 22,
       fontWeight: FontWeight.w800,
@@ -981,7 +1005,7 @@ Widget _stepSubtitle(String text, bool isDark) {
     padding: const EdgeInsets.only(top: 6),
     child: Text(
       text,
-      style: GoogleFonts.outfit(
+      style: GoogleFonts.roboto(
         color: Colors.grey,
         fontSize: 14,
         height: 1.4,
@@ -1009,7 +1033,7 @@ Widget _field({
     children: [
       Text(
         label,
-        style: GoogleFonts.outfit(
+        style: GoogleFonts.roboto(
           color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
           fontSize: 12,
           fontWeight: FontWeight.w600,
@@ -1024,13 +1048,13 @@ Widget _field({
         maxLines: maxLines,
         onChanged: onChanged,
         validator: validator,
-        style: GoogleFonts.outfit(
+        style: GoogleFonts.roboto(
           color: isDark ? Colors.white : Colors.black87,
           fontSize: 15,
         ),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: GoogleFonts.outfit(color: Colors.grey, fontSize: 14),
+          hintStyle: GoogleFonts.roboto(color: Colors.grey, fontSize: 14),
           suffixIcon: suffix,
           filled: true,
           fillColor: isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5),
@@ -1052,7 +1076,10 @@ Widget _field({
         ),
       ),
     ],
-  ).animate(delay: Duration(milliseconds: delay)).fadeIn().slideY(begin: 0.1, end: 0);
+  )
+      .animate(delay: Duration(milliseconds: delay))
+      .fadeIn()
+      .slideY(begin: 0.1, end: 0);
 }
 
 Widget _nextButton({
@@ -1071,7 +1098,7 @@ Widget _nextButton({
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.facebookBlue.withOpacity(0.3),
+            color: AppTheme.facebookBlue.withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1079,7 +1106,7 @@ Widget _nextButton({
       ),
       child: Text(
         label,
-        style: GoogleFonts.outfit(
+        style: GoogleFonts.roboto(
           color: Colors.white,
           fontSize: 16,
           fontWeight: FontWeight.w700,
@@ -1087,5 +1114,8 @@ Widget _nextButton({
         textAlign: TextAlign.center,
       ),
     ),
-  ).animate(delay: Duration(milliseconds: delay)).fadeIn().slideY(begin: 0.2, end: 0);
+  )
+      .animate(delay: Duration(milliseconds: delay))
+      .fadeIn()
+      .slideY(begin: 0.2, end: 0);
 }

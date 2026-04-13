@@ -1,23 +1,34 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+
+import '../models/ad_model.dart';
 import '../models/store_model.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
+import '../store/edit_store_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ad_card.dart';
-import '../models/ad_model.dart';
+import 'ad_detail_screen.dart';
+import 'create_ad_screen.dart';
+import 'reviews_screen.dart';
+import 'store_members_screen.dart';
 
 class MyStoreScreen extends StatefulWidget {
-  const MyStoreScreen({super.key});
+  const MyStoreScreen({
+    super.key,
+    this.storeId,
+  });
+
+  final String? storeId;
 
   @override
   State<MyStoreScreen> createState() => _MyStoreScreenState();
 }
 
 class _MyStoreScreenState extends State<MyStoreScreen> {
-  final _firestoreService = FirestoreService();
+  final _firestore = FirestoreService();
+
   StoreModel? _store;
   bool _loading = true;
 
@@ -29,495 +40,920 @@ class _MyStoreScreenState extends State<MyStoreScreen> {
 
   Future<void> _loadStore() async {
     final user = context.read<UserProvider>().user;
-    if (user == null || user.storeId == null) {
+    final targetStoreId = widget.storeId ?? user?.primaryStoreId;
+    if (targetStoreId == null || targetStoreId.isEmpty) {
+      if (!mounted) return;
       setState(() => _loading = false);
       return;
     }
+
     setState(() => _loading = true);
-    final store = await _firestoreService.getStore(user.storeId!);
-    if (mounted) setState(() { _store = store; _loading = false; });
+    final store = await _firestore.getStore(targetStoreId);
+    if (!mounted) return;
+    setState(() {
+      _store = store;
+      _loading = false;
+    });
   }
 
   Future<void> _toggleStoreStatus() async {
     if (_store == null) return;
-    final newStatus = !_store!.isActive;
-    await _firestoreService.updateStore(_store!.id, {'isActive': newStatus});
-    setState(() => _store = _store!.copyWith(isActive: newStatus));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            newStatus ? 'Loja ativada' : 'Loja pausada',
-            style: GoogleFonts.outfit(color: Colors.white),
+    await _firestore.updateStore(_store!.id, {'isActive': !_store!.isActive});
+    await _loadStore();
+  }
+
+  Future<void> _generateInvite() async {
+    final user = context.read<UserProvider>().user;
+    final store = _store;
+    if (user == null || store == null) return;
+
+    try {
+      final invite = await _firestore.generateStoreInvite(
+        storeId: store.id,
+        adminUserId: user.uid,
+      );
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Adicionar membro'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Usuário: ${invite.username}'),
+              const SizedBox(height: 8),
+              Text('Código: ${invite.code}'),
+              const SizedBox(height: 8),
+              const Text('Validade: 10 minutos'),
+            ],
           ),
-          backgroundColor: newStatus ? AppTheme.success : Colors.orange,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Fechar'),
+            ),
+          ],
         ),
+      );
+      await _loadStore();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro: $e')),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = context.watch<UserProvider>().user;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? AppTheme.black : AppTheme.lightBg;
-    final cardBg = isDark ? AppTheme.blackCard : Colors.white;
-    final border = isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
     final textColor = isDark ? Colors.white : Colors.black87;
-    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade500;
+
+    if (_loading) {
+      return Scaffold(
+        backgroundColor: bg,
+        appBar: AppBar(
+          backgroundColor: isDark ? AppTheme.black : Colors.white,
+          elevation: 0,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: AppTheme.facebookBlue),
+        ),
+      );
+    }
+
+    if (_store == null) {
+      return Scaffold(
+        backgroundColor: bg,
+        appBar: AppBar(
+          backgroundColor: isDark ? AppTheme.black : Colors.white,
+          elevation: 0,
+          title: Text(
+            'Minha loja',
+            style: GoogleFonts.roboto(
+              color: textColor,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        body: Center(
+          child: Text(
+            'Loja não encontrada.',
+            style: GoogleFonts.roboto(color: textColor),
+          ),
+        ),
+      );
+    }
+
+    final store = _store!;
+    final isAdmin = store.isAdmin(user?.uid ?? '');
+    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade600;
 
     return Scaffold(
       backgroundColor: bg,
       appBar: AppBar(
         backgroundColor: isDark ? AppTheme.black : Colors.white,
         elevation: 0,
-        leading: GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            margin: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(Icons.arrow_back_rounded, color: textColor, size: 22),
+        title: Text(
+          store.name,
+          style: GoogleFonts.roboto(
+            color: textColor,
+            fontWeight: FontWeight.w800,
           ),
         ),
-        title: Text(
-          'Minha loja',
-          style: GoogleFonts.outfit(color: textColor, fontSize: 20, fontWeight: FontWeight.w800),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadStore,
+        color: AppTheme.facebookBlue,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _StoreHeader(store: store, isDark: isDark),
+            const SizedBox(height: 16),
+            _StoreMetrics(store: store, isDark: isDark),
+            const SizedBox(height: 16),
+            _SectionCard(
+              isDark: isDark,
+              title: 'Sobre a loja',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    store.description.trim().isNotEmpty
+                        ? store.description
+                        : 'Esta loja ainda não adicionou uma descrição.',
+                    style: GoogleFonts.roboto(
+                      color: mutedColor,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _InfoPill(
+                        icon: Icons.category_rounded,
+                        label: AdModel.displayLabel(store.category),
+                      ),
+                      _InfoPill(
+                        icon: Icons.sell_rounded,
+                        label: store.type == 'servico'
+                            ? 'Serviços'
+                            : store.type == 'ambos'
+                                ? 'Produtos e serviços'
+                                : 'Produtos',
+                      ),
+                      _InfoPill(
+                        icon: store.isActive
+                            ? Icons.check_circle_rounded
+                            : Icons.pause_circle_rounded,
+                        label: store.isActive ? 'Loja ativa' : 'Loja pausada',
+                        accent: store.isActive
+                            ? AppTheme.success
+                            : const Color(0xFFF59E0B),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _SectionCard(
+              isDark: isDark,
+              title: 'Informações',
+              child: Column(
+                children: [
+                  _InfoRow(
+                    icon: Icons.location_on_outlined,
+                    label: 'Endereço',
+                    value: store.address.formatted,
+                    isDark: isDark,
+                  ),
+                  const SizedBox(height: 12),
+                  _InfoRow(
+                    icon: Icons.person_outline_rounded,
+                    label: 'Responsável',
+                    value: store.ownerName,
+                    isDark: isDark,
+                  ),
+                  const SizedBox(height: 12),
+                  _InfoRow(
+                    icon: Icons.alternate_email_rounded,
+                    label: 'Usuário da loja',
+                    value: '@${store.accessUsername}',
+                    isDark: isDark,
+                    valueColor: AppTheme.facebookBlue,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _SectionCard(
+              isDark: isDark,
+              title: 'Avaliações',
+              trailing: TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ReviewsScreen(
+                      userId: store.id,
+                      allowReply: isAdmin,
+                      title: 'Avaliações da loja',
+                    ),
+                  ),
+                ),
+                child: const Text('Ver todas'),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      color: AppTheme.facebookBlue.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      store.rating.toStringAsFixed(1),
+                      style: GoogleFonts.roboto(
+                        color: AppTheme.facebookBlue,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: List.generate(
+                            5,
+                            (index) => Icon(
+                              index < store.rating.round()
+                                  ? Icons.star_rounded
+                                  : Icons.star_border_rounded,
+                              color: Colors.amber,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          store.totalReviews > 0
+                              ? '${store.totalReviews} avaliações recebidas'
+                              : 'Ainda sem avaliações recebidas',
+                          style: GoogleFonts.roboto(color: mutedColor),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _SectionCard(
+              isDark: isDark,
+              title: 'Gerenciar loja',
+              child: Column(
+                children: [
+                  _ActionTile(
+                    isDark: isDark,
+                    label: store.isActive ? 'Pausar loja' : 'Ativar loja',
+                    subtitle: store.isActive
+                        ? 'Oculta temporariamente os anúncios da loja'
+                        : 'Torna a loja visível novamente',
+                    icon: store.isActive
+                        ? Icons.pause_circle_outline_rounded
+                        : Icons.play_circle_outline_rounded,
+                    enabled: isAdmin,
+                    onTap: isAdmin ? _toggleStoreStatus : null,
+                  ),
+                  _TileDivider(isDark: isDark),
+                  _ActionTile(
+                    isDark: isDark,
+                    label: 'Adicionar produto / serviço',
+                    subtitle: 'Criar anúncio em nome desta loja',
+                    icon: Icons.add_business_outlined,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            CreateAdScreen(initialStoreId: store.id),
+                      ),
+                    ).then((_) => _loadStore()),
+                  ),
+                  if (isAdmin) ...[
+                    _TileDivider(isDark: isDark),
+                    _ActionTile(
+                      isDark: isDark,
+                      label: 'Editar loja',
+                      subtitle: 'Alterar logo, banner, dados e endereço',
+                      icon: Icons.edit_outlined,
+                      onTap: () {
+                        final navigator = Navigator.of(context);
+                        Navigator.push<Object?>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => EditStoreScreen(
+                              store: store,
+                              currentUserId: user?.uid ?? '',
+                            ),
+                          ),
+                        ).then((result) {
+                          if (result == 'deleted') {
+                            if (mounted) navigator.pop();
+                            return;
+                          }
+                          final updatedStore =
+                              result is StoreModel ? result : null;
+                          if (updatedStore != null && mounted) {
+                            setState(() => _store = updatedStore);
+                          }
+                          _loadStore();
+                        });
+                      },
+                    ),
+                    _TileDivider(isDark: isDark),
+                    _ActionTile(
+                      isDark: isDark,
+                      label: 'Adicionar membro',
+                      subtitle: 'Gerar usuário e código válidos por 10 minutos',
+                      icon: Icons.person_add_alt_1_outlined,
+                      onTap: _generateInvite,
+                    ),
+                    _TileDivider(isDark: isDark),
+                    _ActionTile(
+                      isDark: isDark,
+                      label: 'Gerenciar membros',
+                      subtitle: 'Tornar admin, remover usuário e mais',
+                      icon: Icons.groups_outlined,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StoreMembersScreen(storeId: store.id),
+                        ),
+                      ).then((_) => _loadStore()),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 28),
+            Text(
+              'Anúncios da loja',
+              style: GoogleFonts.roboto(
+                color: textColor,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FutureBuilder<List<AdModel>>(
+              future: _firestore.getAdsByStore(
+                store.id,
+                includeInactive: true,
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: CircularProgressIndicator(
+                        color: AppTheme.facebookBlue,
+                      ),
+                    ),
+                  );
+                }
+
+                final ads = snapshot.data ?? const <AdModel>[];
+                if (ads.isEmpty) {
+                  return _SectionCard(
+                    isDark: isDark,
+                    title: 'Sem anúncios',
+                    child: Text(
+                      'Nenhum anúncio da loja por enquanto.',
+                      style: GoogleFonts.roboto(color: mutedColor),
+                    ),
+                  );
+                }
+
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: ads.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    mainAxisExtent: 304,
+                  ),
+                  itemBuilder: (context, index) => AdCard(
+                    ad: ads[index],
+                    index: index,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AdDetailScreen(ad: ads[index]),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppTheme.facebookBlue))
-          : _store == null
-              ? _buildNoStore(isDark, textColor)
-              : RefreshIndicator(
-                  onRefresh: _loadStore,
-                  color: AppTheme.facebookBlue,
-                  child: ListView(
-                    padding: EdgeInsets.zero,
+    );
+  }
+}
+
+class _StoreHeader extends StatelessWidget {
+  const _StoreHeader({
+    required this.store,
+    required this.isDark,
+  });
+
+  final StoreModel store;
+  final bool isDark;
+
+  bool get _hasBanner =>
+      store.banner != null && store.banner!.trim().isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade600;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackCard : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 156,
+            width: double.infinity,
+            child: _hasBanner
+                ? Image.network(
+                    store.banner!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        _BannerFallback(isDark: isDark),
+                  )
+                : _BannerFallback(isDark: isDark),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _StoreAvatar(
+                  imageUrl: store.logo,
+                  label: store.name,
+                  radius: 34,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Banner
-                      _buildBanner(isDark, cardBg),
-
-                      const SizedBox(height: 48),
-
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Status badge
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: (_store!.isActive ? AppTheme.success : Colors.orange)
-                                        .withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        width: 7,
-                                        height: 7,
-                                        decoration: BoxDecoration(
-                                          color: _store!.isActive ? AppTheme.success : Colors.orange,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        _store!.isActive ? 'Loja ativa' : 'Loja pausada',
-                                        style: GoogleFonts.outfit(
-                                          color: _store!.isActive ? AppTheme.success : Colors.orange,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ).animate().fadeIn(),
-
-                            const SizedBox(height: 12),
-
-                            Text(
-                              _store!.name,
-                              style: GoogleFonts.outfit(
-                                color: textColor,
-                                fontSize: 24,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ).animate(delay: 60.ms).fadeIn(),
-
-                            const SizedBox(height: 4),
-
-                            Text(
-                              _store!.category,
-                              style: GoogleFonts.outfit(
-                                color: AppTheme.facebookBlue,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ).animate(delay: 80.ms).fadeIn(),
-
-                            const SizedBox(height: 12),
-
-                            Text(
-                              _store!.description,
-                              style: GoogleFonts.outfit(
-                                color: mutedColor,
-                                fontSize: 14,
-                                height: 1.6,
-                              ),
-                            ).animate(delay: 100.ms).fadeIn(),
-
-                            const SizedBox(height: 20),
-
-                            // Endereço
-                            _infoCard(
-                              isDark: isDark,
-                              cardBg: cardBg,
-                              border: border,
-                              icon: Icons.location_on_outlined,
-                              iconColor: AppTheme.facebookBlue,
-                              title: 'Endereço',
-                              value: _store!.address.formatted,
-                              textColor: textColor,
-                              mutedColor: mutedColor,
-                            ).animate(delay: 140.ms).fadeIn(),
-
-                            const SizedBox(height: 12),
-
-                            // Avaliação
-                            _infoCard(
-                              isDark: isDark,
-                              cardBg: cardBg,
-                              border: border,
-                              icon: Icons.star_rounded,
-                              iconColor: Colors.orange,
-                              title: 'Avaliação',
-                              value: '${_store!.rating.toStringAsFixed(1)} ⭐  '
-                                  '(${_store!.totalReviews} avaliações)',
-                              textColor: textColor,
-                              mutedColor: mutedColor,
-                            ).animate(delay: 160.ms).fadeIn(),
-
-                            const SizedBox(height: 24),
-
-                            // Ações
-                            _sectionLabel('Gerenciar loja', isDark),
-                            const SizedBox(height: 10),
-
-                            Container(
-                              decoration: BoxDecoration(
-                                color: cardBg,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: border),
-                              ),
-                              child: Column(
-                                children: [
-                                  _actionTile(
-                                    icon: _store!.isActive
-                                        ? Icons.pause_circle_outline_rounded
-                                        : Icons.play_circle_outline_rounded,
-                                    iconColor: _store!.isActive ? Colors.orange : AppTheme.success,
-                                    label: _store!.isActive ? 'Pausar loja' : 'Ativar loja',
-                                    subtitle: _store!.isActive
-                                        ? 'Anúncios ficam ocultos temporariamente'
-                                        : 'Seus anúncios voltam a aparecer',
-                                    textColor: textColor,
-                                    onTap: _toggleStoreStatus,
-                                  ),
-                                  Divider(height: 1, indent: 66, color: border),
-                                  _actionTile(
-                                    icon: Icons.edit_outlined,
-                                    iconColor: AppTheme.facebookBlue,
-                                    label: 'Editar informações',
-                                    subtitle: 'Nome, descrição, logo e banner',
-                                    textColor: textColor,
-                                    onTap: () {
-                                      // Navegar para edição da loja
-                                    },
-                                  ),
-                                  Divider(height: 1, indent: 66, color: border),
-                                  _actionTile(
-                                    icon: Icons.add_circle_outline_rounded,
-                                    iconColor: const Color(0xFF27AE60),
-                                    label: 'Adicionar produto / serviço',
-                                    subtitle: 'Publique novos anúncios',
-                                    textColor: textColor,
-                                    onTap: () => Navigator.pop(context),
-                                  ),
-                                ],
-                              ),
-                            ).animate(delay: 200.ms).fadeIn(),
-
-                            const SizedBox(height: 32),
-
-                            _sectionLabel('Produtos e Serviços', isDark),
-                            const SizedBox(height: 16),
-
-                            FutureBuilder<List<AdModel>>(
-                              future: _firestoreService.getAdsByStore(_store!.id),
-                              builder: (context, snapshot) {
-                                if (snapshot.connectionState == ConnectionState.waiting) {
-                                  return const Center(child: CircularProgressIndicator(color: AppTheme.facebookBlue));
-                                }
-                                final ads = snapshot.data ?? [];
-                                if (ads.isEmpty) {
-                                  return Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 40),
-                                      child: Column(
-                                        children: [
-                                          Icon(Icons.inventory_2_outlined, color: mutedColor.withOpacity(0.3), size: 48),
-                                          const SizedBox(height: 12),
-                                          Text('Nenhum produto cadastrado', style: GoogleFonts.outfit(color: mutedColor)),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                }
-                                return GridView.builder(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 2,
-                                    crossAxisSpacing: 12,
-                                    mainAxisSpacing: 12,
-                                    childAspectRatio: 0.75,
-                                  ),
-                                  itemCount: ads.length,
-                                  itemBuilder: (context, index) => AdCard(
-                                    ad: ads[index],
-                                    index: index,
-                                    onTap: () {
-                                      // Navegar para detalhe
-                                    },
-                                  ),
-                                );
-                              },
-                            ),
-
-                            const SizedBox(height: 40),
-                          ],
+                      Text(
+                        store.name,
+                        style: GoogleFonts.roboto(
+                          color: textColor,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
                         ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AdModel.displayLabel(store.category),
+                        style: GoogleFonts.roboto(
+                          color: AppTheme.facebookBlue,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        store.address.city.isNotEmpty
+                            ? '${store.address.city}, ${store.address.state}'
+                            : store.address.state,
+                        style: GoogleFonts.roboto(color: mutedColor),
                       ),
                     ],
                   ),
                 ),
-    );
-  }
-
-  Widget _buildBanner(bool isDark, Color cardBg) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          height: 180,
-          width: double.infinity,
-          color: isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
-          child: _store?.banner != null
-              ? Image.network(_store!.banner!, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _bannerPlaceholder())
-              : _bannerPlaceholder(),
-        ),
-        Positioned(
-          bottom: -40,
-          left: 16,
-          child: Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: cardBg,
-              shape: BoxShape.circle,
-              border: Border.all(color: isDark ? AppTheme.black : Colors.white, width: 4),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, 2)),
               ],
             ),
-            child: ClipOval(
-              child: _store?.logo != null
-                  ? Image.network(_store!.logo!, fit: BoxFit.cover)
-                  : Center(child: Text(_store?.name[0] ?? 'S', style: GoogleFonts.outfit(fontSize: 32, fontWeight: FontWeight.w800, color: AppTheme.facebookBlue))),
-            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BannerFallback extends StatelessWidget {
+  const _BannerFallback({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isDark
+              ? const [Color(0xFF0F172A), Color(0xFF111827)]
+              : const [Color(0xFFEFF6FF), Color(0xFFF8FAFC)],
+        ),
+      ),
+      child: const Center(
+        child: Icon(
+          Icons.storefront_rounded,
+          color: AppTheme.facebookBlue,
+          size: 42,
+        ),
+      ),
+    );
+  }
+}
+
+class _StoreMetrics extends StatelessWidget {
+  const _StoreMetrics({
+    required this.store,
+    required this.isDark,
+  });
+
+  final StoreModel store;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardColor = isDark ? AppTheme.blackCard : Colors.white;
+    final borderColor = isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade600;
+
+    return Row(
+      children: [
+        Expanded(
+          child: _MetricCard(
+            cardColor: cardColor,
+            borderColor: borderColor,
+            label: 'Avaliação',
+            value: store.rating.toStringAsFixed(1),
+            textColor: textColor,
+            mutedColor: mutedColor,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _MetricCard(
+            cardColor: cardColor,
+            borderColor: borderColor,
+            label: 'Avaliações',
+            value: '${store.totalReviews}',
+            textColor: textColor,
+            mutedColor: mutedColor,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _MetricCard(
+            cardColor: cardColor,
+            borderColor: borderColor,
+            label: 'Membros',
+            value: '${store.members.length}',
+            textColor: textColor,
+            mutedColor: mutedColor,
           ),
         ),
       ],
     );
   }
+}
 
-  Widget _bannerPlaceholder() {
-    return Center(
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({
+    required this.cardColor,
+    required this.borderColor,
+    required this.label,
+    required this.value,
+    required this.textColor,
+    required this.mutedColor,
+  });
+
+  final Color cardColor;
+  final Color borderColor;
+  final String label;
+  final String value;
+  final Color textColor;
+  final Color mutedColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+      ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.store_rounded, color: AppTheme.facebookBlue, size: 52),
-          const SizedBox(height: 8),
           Text(
-            _store?.name ?? '',
-            style: GoogleFonts.outfit(
-              color: AppTheme.facebookBlue, fontSize: 18, fontWeight: FontWeight.w700),
+            value,
+            style: GoogleFonts.roboto(
+              color: textColor,
+              fontSize: 19,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.roboto(
+              color: mutedColor,
+              fontSize: 12,
+            ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildNoStore(bool isDark, Color textColor) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 88, height: 88,
-              decoration: BoxDecoration(
-                color: AppTheme.facebookBlue.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.store_outlined,
-                  color: AppTheme.facebookBlue, size: 44),
-            ).animate().scale(duration: 500.ms, curve: Curves.elasticOut),
-            const SizedBox(height: 20),
-            Text('Você ainda não tem loja',
-                style: GoogleFonts.outfit(
-                    color: textColor, fontSize: 18, fontWeight: FontWeight.w700)
-            ).animate(delay: 100.ms).fadeIn(),
-            const SizedBox(height: 8),
-            Text(
-              'Crie sua loja para ter uma presença profissional e alcançar mais clientes.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.outfit(color: Colors.grey, fontSize: 14, height: 1.5),
-            ).animate(delay: 160.ms).fadeIn(),
-            const SizedBox(height: 28),
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppTheme.facebookBlue,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.facebookBlue.withOpacity(0.3),
-                      blurRadius: 12, offset: const Offset(0, 4)),
-                  ],
-                ),
-                child: Text('Criar minha loja',
-                    style: GoogleFonts.outfit(
-                        color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
-              ),
-            ).animate(delay: 220.ms).fadeIn().slideY(begin: 0.1, end: 0),
-          ],
-        ),
-      ),
-    );
-  }
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.isDark,
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
 
-  Widget _infoCard({
-    required bool isDark,
-    required Color cardBg,
-    required Color border,
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String value,
-    required Color textColor,
-    required Color mutedColor,
-  }) {
+  final bool isDark;
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: cardBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: border),
+        color: isDark ? AppTheme.blackCard : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8),
+        ),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: iconColor, size: 20),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.roboto(
+                    color: textColor,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (trailing != null) trailing!,
+            ],
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: GoogleFonts.outfit(
-                    color: mutedColor, fontSize: 11, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 3),
-                Text(value, style: GoogleFonts.outfit(
-                    color: textColor, fontSize: 13, height: 1.4)),
-              ],
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoPill extends StatelessWidget {
+  const _InfoPill({
+    required this.icon,
+    required this.label,
+    this.accent = AppTheme.facebookBlue,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: accent),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: GoogleFonts.roboto(
+              color: accent,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _sectionLabel(String text, bool isDark) {
-    return Text(
-      text.toUpperCase(),
-      style: GoogleFonts.outfit(
-        color: isDark ? AppTheme.whiteMuted : Colors.grey.shade500,
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.8,
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.isDark,
+    this.valueColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isDark;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade600;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: AppTheme.facebookBlue, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: GoogleFonts.roboto(
+                  color: mutedColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: GoogleFonts.roboto(
+                  color: valueColor ?? textColor,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.isDark,
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    this.enabled = true,
+    this.onTap,
+  });
+
+  final bool isDark;
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return ListTile(
+      onTap: enabled ? onTap : null,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        icon,
+        color: enabled ? AppTheme.facebookBlue : Colors.grey,
+      ),
+      title: Text(
+        label,
+        style: GoogleFonts.roboto(
+          color: enabled ? textColor : Colors.grey,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: GoogleFonts.roboto(
+          color: isDark ? AppTheme.whiteMuted : Colors.grey.shade600,
+        ),
+      ),
+      trailing: Icon(
+        Icons.chevron_right_rounded,
+        color: enabled
+            ? (isDark ? AppTheme.whiteMuted : Colors.grey.shade600)
+            : Colors.grey,
       ),
     );
   }
+}
 
-  Widget _actionTile({
-    required IconData icon,
-    required Color iconColor,
-    required String label,
-    required String subtitle,
-    required Color textColor,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: iconColor, size: 20),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: GoogleFonts.outfit(
-                      color: textColor, fontSize: 14, fontWeight: FontWeight.w600)),
-                  Text(subtitle, style: GoogleFonts.outfit(color: Colors.grey, fontSize: 12)),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 20),
-          ],
-        ),
+class _TileDivider extends StatelessWidget {
+  const _TileDivider({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Divider(
+      height: 1,
+      indent: 34,
+      color: isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8),
+    );
+  }
+}
+
+class _StoreAvatar extends StatelessWidget {
+  const _StoreAvatar({
+    required this.imageUrl,
+    required this.label,
+    required this.radius,
+  });
+
+  final String? imageUrl;
+  final String label;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl?.trim() ?? '';
+    final fallback = label.isNotEmpty ? label[0].toUpperCase() : 'L';
+
+    return Container(
+      width: radius * 2,
+      height: radius * 2,
+      decoration: BoxDecoration(
+        color: AppTheme.facebookBlue.withValues(alpha: 0.10),
+        shape: BoxShape.circle,
       ),
+      clipBehavior: Clip.antiAlias,
+      child: url.isNotEmpty
+          ? Image.network(
+              url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Center(
+                child: Text(
+                  fallback,
+                  style: GoogleFonts.roboto(
+                    color: AppTheme.facebookBlue,
+                    fontSize: radius * 0.82,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            )
+          : Center(
+              child: Text(
+                fallback,
+                style: GoogleFonts.roboto(
+                  color: AppTheme.facebookBlue,
+                  fontSize: radius * 0.82,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
     );
   }
 }

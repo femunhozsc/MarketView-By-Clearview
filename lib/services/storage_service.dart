@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 class StorageService {
@@ -49,6 +50,7 @@ class StorageService {
       await ref.putFile(file, metadata);
       return await ref.getDownloadURL();
     } catch (e) {
+      debugPrint('Firebase Storage upload falhou em $path: $e');
       return null;
     }
   }
@@ -71,5 +73,16 @@ class StorageService {
       maxWidth: 1200,
     );
     return picked.take(max).map((e) => File(e.path)).toList();
+  }
+
+  Future<bool> deleteFileByUrl(String url) async {
+    try {
+      final ref = _storage.refFromURL(url);
+      await ref.delete();
+      return true;
+    } catch (e) {
+      debugPrint('Firebase Storage delete falhou em $url: $e');
+      return false;
+    }
   }
 }

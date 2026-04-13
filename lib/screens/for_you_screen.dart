@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../models/ad_model.dart';
 import '../models/store_model.dart';
@@ -9,14 +10,134 @@ import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ad_card.dart';
+import '../widgets/marketplace_controls.dart';
 import 'ad_detail_screen.dart';
 import 'category_ads_screen.dart';
 import 'seller_profile_screen.dart';
 
+const Map<String, List<String>> _stateAliasesByRegionKey = {
+  'pr': ['pr', 'parana'],
+  'sp': ['sp', 'sao paulo'],
+  'rj': ['rj', 'rio de janeiro'],
+  'mg': ['mg', 'minas gerais'],
+  'sc': ['sc', 'santa catarina'],
+  'rs': ['rs', 'rio grande do sul'],
+  'ba': ['ba', 'bahia'],
+  'go': ['go', 'goias'],
+  'df': ['df', 'distrito federal', 'brasilia'],
+  'br': ['brasil'],
+};
+
+const Color _marketCharcoal = Color(0xFF35393F);
+const Color _marketMuted = Color(0xFF6B7280);
+const Color _marketLine = Color(0xFFD1D5DB);
+
+String _normalizeLocationValue(String value) => AdModel.normalizeValue(value);
+
+String _baseLocationLabel(String value) {
+  return value.replaceFirst(RegExp(r'\s+[|\-]\s+\d+\s*km$'), '').trim();
+}
+
+double? _distanceKmForAd(
+  AdModel ad,
+  Distance distance,
+  double searchLat,
+  double searchLng,
+) {
+  if (searchLat == 0 || searchLng == 0 || ad.lat == null || ad.lng == null) {
+    return null;
+  }
+
+  return distance.as(
+    LengthUnit.Kilometer,
+    LatLng(searchLat, searchLng),
+    LatLng(ad.lat!, ad.lng!),
+  );
+}
+
+bool _matchesStateLocation(AdModel ad, String regionKey) {
+  final normalizedLocation = _normalizeLocationValue(ad.location);
+  final aliases =
+      _stateAliasesByRegionKey[_normalizeLocationValue(regionKey)] ??
+          [_normalizeLocationValue(regionKey)];
+
+  return aliases.any(
+    (alias) =>
+        normalizedLocation.contains(', $alias') ||
+        normalizedLocation.endsWith(alias) ||
+        normalizedLocation.contains(alias),
+  );
+}
+
+bool _matchesSelectedLocationRule({
+  required AdModel ad,
+  required String locationScope,
+  required String locationRegionKey,
+  required String locationLabel,
+  required double searchLat,
+  required double searchLng,
+  required int searchRadiusKm,
+  required Distance distance,
+}) {
+  if (locationScope == 'country') {
+    return true;
+  }
+
+  if (locationScope == 'state') {
+    return _matchesStateLocation(ad, locationRegionKey);
+  }
+
+  final distanceKm = _distanceKmForAd(ad, distance, searchLat, searchLng);
+  if (distanceKm != null) {
+    return distanceKm <= searchRadiusKm;
+  }
+
+  final selectedRegion =
+      _normalizeLocationValue(_baseLocationLabel(locationLabel));
+  final adLocation = _normalizeLocationValue(ad.location);
+  if (selectedRegion.isEmpty || adLocation.isEmpty) {
+    return false;
+  }
+
+  return adLocation.contains(selectedRegion) ||
+      selectedRegion.contains(adLocation);
+}
+
+int? _roundedDistanceKm(
+  AdModel ad,
+  Distance distance,
+  String locationScope,
+  double searchLat,
+  double searchLng,
+) {
+  if (locationScope != 'city') return null;
+
+  final distanceKm = _distanceKmForAd(ad, distance, searchLat, searchLng);
+  if (distanceKm == null) return null;
+  if (distanceKm > 0 && distanceKm < 1) return 1;
+  return distanceKm.round();
+}
+
 // Tela "Ver Mais Recomendados" com scroll infinito
 class AllRecommendedScreen extends StatefulWidget {
   final List<String> topCategories;
-  const AllRecommendedScreen({super.key, required this.topCategories});
+  final String locationScope;
+  final String locationRegionKey;
+  final double searchLat;
+  final double searchLng;
+  final int searchRadiusKm;
+  final String locationLabel;
+
+  const AllRecommendedScreen({
+    super.key,
+    required this.topCategories,
+    this.locationScope = 'city',
+    this.locationRegionKey = '',
+    this.searchLat = 0,
+    this.searchLng = 0,
+    this.searchRadiusKm = 50,
+    this.locationLabel = '',
+  });
 
   @override
   State<AllRecommendedScreen> createState() => _AllRecommendedScreenState();
@@ -25,11 +146,13 @@ class AllRecommendedScreen extends StatefulWidget {
 class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
   final _firestore = FirestoreService();
   final _scrollCtrl = ScrollController();
+  final Distance _distance = const Distance();
   List<AdModel> _ads = [];
   bool _loading = true;
   bool _loadingMore = false;
   bool _hasMore = true;
   DocumentSnapshot? _lastDoc;
+  int _lastMarketplaceRefreshTick = -1;
 
   @override
   void initState() {
@@ -44,8 +167,38 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
     super.dispose();
   }
 
+  List<AdModel> get _visibleAds {
+    final filtered = _ads.where((ad) {
+      return _matchesSelectedLocationRule(
+        ad: ad,
+        locationScope: widget.locationScope,
+        locationRegionKey: widget.locationRegionKey,
+        locationLabel: widget.locationLabel,
+        searchLat: widget.searchLat,
+        searchLng: widget.searchLng,
+        searchRadiusKm: widget.searchRadiusKm,
+        distance: _distance,
+      );
+    }).toList();
+
+    if (widget.locationScope == 'city') {
+      filtered.sort((a, b) {
+        final aDistance = _distanceKmForAd(
+                a, _distance, widget.searchLat, widget.searchLng) ??
+            double.infinity;
+        final bDistance = _distanceKmForAd(
+                b, _distance, widget.searchLat, widget.searchLng) ??
+            double.infinity;
+        return aDistance.compareTo(bDistance);
+      });
+    }
+
+    return filtered;
+  }
+
   void _onScroll() {
-    if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 300) {
+    if (_scrollCtrl.position.pixels >=
+        _scrollCtrl.position.maxScrollExtent - 300) {
       if (!_loadingMore && _hasMore) _loadMore();
     }
   }
@@ -55,6 +208,7 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
     final result = await _firestore.getRecommendedAdsPaginated(
       widget.topCategories,
       limit: 20,
+      intent: AdModel.intentSell,
     );
     if (mounted) {
       setState(() {
@@ -73,6 +227,7 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
       widget.topCategories,
       limit: 20,
       startAfter: _lastDoc,
+      intent: AdModel.intentSell,
     );
     final newAds = result['ads'] as List<AdModel>;
     if (mounted) {
@@ -87,7 +242,17 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final marketplaceRefreshTick =
+        context.watch<UserProvider>().marketplaceRefreshTick;
+    if (_lastMarketplaceRefreshTick != marketplaceRefreshTick) {
+      _lastMarketplaceRefreshTick = marketplaceRefreshTick;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadAds();
+      });
+    }
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final visibleAds = _visibleAds;
     return Scaffold(
       backgroundColor: isDark ? AppTheme.black : AppTheme.lightBg,
       appBar: AppBar(
@@ -101,87 +266,150 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
               color: isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(Icons.arrow_back_rounded, color: isDark ? Colors.white : Colors.black87, size: 22),
+            child: Icon(
+              Icons.arrow_back_rounded,
+              color: isDark ? Colors.white : _marketCharcoal,
+              size: 22,
+            ),
           ),
         ),
         title: Text(
           'Recomendados para você',
-          style: GoogleFonts.outfit(
-            color: isDark ? Colors.white : Colors.black87,
+          style: GoogleFonts.roboto(
+            color: isDark ? Colors.white : _marketCharcoal,
             fontSize: 20,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
           ),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8)),
+          child: Container(
+              height: 1,
+              color: isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8)),
         ),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppTheme.facebookBlue))
-          : CustomScrollView(
-              controller: _scrollCtrl,
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.all(12),
-                  sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 0.72,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (context, i) {
-                        final ad = _ads[i];
-                        return AdCard(
-                          ad: ad,
-                          index: i,
-                          onTap: () {
-                            _firestore.incrementAdClick(ad.id);
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => AdDetailScreen(ad: ad)),
+          ? const Center(
+              child: CircularProgressIndicator(color: AppTheme.facebookBlue))
+          : visibleAds.isEmpty
+              ? Center(
+                  child: Text(
+                    'Nenhum anuncio encontrado nessa localizacao.',
+                    style:
+                        GoogleFonts.roboto(color: _marketMuted, fontSize: 14),
+                  ),
+                )
+              : CustomScrollView(
+                  controller: _scrollCtrl,
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
+                      sliver: SliverGrid(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 6,
+                          crossAxisSpacing: 6,
+                          mainAxisExtent: 236,
+                        ),
+                        delegate: SliverChildBuilderDelegate(
+                          (context, i) {
+                            final ad = visibleAds[i];
+                            return AdCard(
+                              ad: ad,
+                              index: i,
+                              badgeLabel: widget.locationScope == 'state'
+                                  ? 'Na regiao'
+                                  : widget.locationScope == 'country'
+                                      ? 'Brasil'
+                                      : null,
+                              distanceKm: _roundedDistanceKm(
+                                ad,
+                                _distance,
+                                widget.locationScope,
+                                widget.searchLat,
+                                widget.searchLng,
+                              ),
+                              onTap: () {
+                                _firestore.incrementAdClick(ad.id);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => AdDetailScreen(ad: ad)),
+                                );
+                              },
                             );
                           },
-                        );
-                      },
-                      childCount: _ads.length,
-                    ),
-                  ),
-                ),
-                if (_loadingMore)
-                  const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator(color: AppTheme.facebookBlue)),
-                    ),
-                  ),
-                if (!_hasMore && _ads.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Center(
-                        child: Text(
-                          'Você viu todos os recomendados!',
-                          style: GoogleFonts.outfit(color: Colors.grey, fontSize: 13),
+                          childCount: visibleAds.length,
                         ),
                       ),
                     ),
-                  ),
-                const SliverToBoxAdapter(child: SizedBox(height: 40)),
-              ],
-            ),
+                    if (_loadingMore)
+                      const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(
+                              child: CircularProgressIndicator(
+                                  color: AppTheme.facebookBlue)),
+                        ),
+                      ),
+                    if (!_hasMore && visibleAds.isNotEmpty)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Center(
+                            child: Text(
+                              'Você viu todos os recomendados!',
+                              style: GoogleFonts.roboto(
+                                color: _marketMuted,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 40)),
+                  ],
+                ),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 class ForYouScreen extends StatefulWidget {
   final VoidCallback? onViewMoreStores;
+  final List<AdModel> initialAds;
+  final List<StoreModel> initialStores;
+  final List<AdModel> initialRecommendedAds;
+  final Map<String, List<AdModel>> initialCategoryAds;
+  final List<String> initialUserCategories;
+  final int initialLoadedCategoryIndex;
+  final MarketplaceFilters filters;
+  final String locationScope;
+  final String locationRegionKey;
+  final double searchLat;
+  final double searchLng;
+  final int searchRadiusKm;
+  final String locationLabel;
 
-  const ForYouScreen({super.key, this.onViewMoreStores});
+  const ForYouScreen({
+    super.key,
+    this.onViewMoreStores,
+    this.initialAds = const [],
+    this.initialStores = const [],
+    this.initialRecommendedAds = const [],
+    this.initialCategoryAds = const {},
+    this.initialUserCategories = const [],
+    this.initialLoadedCategoryIndex = 0,
+    this.filters = MarketplaceFilters.empty,
+    this.locationScope = 'city',
+    this.locationRegionKey = '',
+    this.searchLat = 0,
+    this.searchLng = 0,
+    this.searchRadiusKm = 50,
+    this.locationLabel = '',
+  });
 
   @override
   State<ForYouScreen> createState() => _ForYouScreenState();
@@ -190,6 +418,7 @@ class ForYouScreen extends StatefulWidget {
 class _ForYouScreenState extends State<ForYouScreen> {
   final FirestoreService _firestore = FirestoreService();
   final ScrollController _scrollController = ScrollController();
+  final Distance _distance = const Distance();
 
   // Dados
   List<AdModel> _recommendedAds = [];
@@ -202,18 +431,19 @@ class _ForYouScreenState extends State<ForYouScreen> {
   bool _loadingStores = true;
   bool _loadingMoreCategories = false;
   bool _isNewUser = true;
+  int _lastMarketplaceRefreshTick = -1;
 
   // Ordem padrão de categorias para novos usuários
-  static const List<String> _defaultCategoryOrder = [
-    'Eletrônicos', 'Veículos', 'Imóveis', 'Móveis', 'Roupas',
-    'Esportes', 'Design', 'Educação', 'Saúde', 'Beleza', 'Animais', 'Outros',
-  ];
+  static const List<String> _defaultCategoryOrder = categories;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _loadInitialData();
+    final seeded = _seedInitialData();
+    if (!seeded) {
+      _loadInitialData();
+    }
   }
 
   @override
@@ -230,15 +460,131 @@ class _ForYouScreenState extends State<ForYouScreen> {
     }
   }
 
+  bool _seedInitialData() {
+    _resolveUserCategories();
+
+    if (widget.initialUserCategories.isNotEmpty) {
+      _userCategories = List<String>.from(widget.initialUserCategories);
+      _isNewUser = false;
+    }
+
+    if (widget.initialRecommendedAds.isNotEmpty) {
+      _recommendedAds = List<AdModel>.from(widget.initialRecommendedAds);
+      _loadingRecommended = false;
+    } else if (widget.initialAds.isNotEmpty) {
+      _recommendedAds = _buildSeedRecommendedAds(widget.initialAds);
+      _loadingRecommended = false;
+    }
+
+    if (widget.initialCategoryAds.isNotEmpty) {
+      _categoryAds.addAll(
+        widget.initialCategoryAds.map(
+          (key, value) => MapEntry(key, List<AdModel>.from(value)),
+        ),
+      );
+      _loadedCategoryIndex = widget.initialLoadedCategoryIndex;
+    } else if (widget.initialAds.isNotEmpty && _userCategories.isNotEmpty) {
+      final firstCategoryAds =
+          _buildSeedCategoryAds(_userCategories.first, widget.initialAds);
+      if (firstCategoryAds.isNotEmpty) {
+        _categoryAds[_userCategories.first] = firstCategoryAds;
+        _loadedCategoryIndex = 1;
+      }
+    }
+
+    if (widget.initialStores.isNotEmpty) {
+      _featuredStores = List<StoreModel>.from(widget.initialStores);
+      _loadingStores = false;
+    }
+
+    return !_loadingRecommended && !_loadingStores;
+  }
+
+  void _resolveUserCategories() {
+    final user = context.read<UserProvider>().user;
+
+    if (user != null && user.categoryClicks.isNotEmpty) {
+      _isNewUser = false;
+      final topCats = user.topCategories;
+      final remaining =
+          _defaultCategoryOrder.where((c) => !topCats.contains(c)).toList();
+      _userCategories = [...topCats, ...remaining];
+      return;
+    }
+
+    _isNewUser = true;
+    _userCategories = List.from(_defaultCategoryOrder);
+  }
+
+  List<AdModel> _sortSeedAds(Iterable<AdModel> ads) {
+    final sorted = ads.toList()
+      ..sort((a, b) {
+        final clicksComparison = b.clickCount.compareTo(a.clickCount);
+        if (clicksComparison != 0) return clicksComparison;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+    return sorted;
+  }
+
+  List<AdModel> _buildSeedRecommendedAds(List<AdModel> ads) {
+    final saleAds = _sortSeedAds(
+      ads.where((ad) => ad.intent == AdModel.intentSell),
+    );
+
+    if (_isNewUser) {
+      return saleAds.take(12).toList();
+    }
+
+    final seenIds = <String>{};
+    final recommended = <AdModel>[];
+
+    for (final category in _userCategories.take(3)) {
+      for (final ad in saleAds.where((item) => item.category == category)) {
+        if (seenIds.add(ad.id)) {
+          recommended.add(ad);
+        }
+      }
+    }
+
+    for (final ad in saleAds) {
+      if (seenIds.add(ad.id)) {
+        recommended.add(ad);
+      }
+    }
+
+    return recommended.take(12).toList();
+  }
+
+  List<AdModel> _buildSeedCategoryAds(String category, List<AdModel> ads) {
+    return _sortSeedAds(
+      ads.where(
+        (ad) => ad.intent == AdModel.intentSell && ad.category == category,
+      ),
+    ).take(12).toList();
+  }
+
   Future<void> _loadInitialData() async {
     final user = context.read<UserProvider>().user;
+
+    if (mounted) {
+      setState(() {
+        _loadingRecommended = true;
+        _loadingStores = true;
+        _loadingMoreCategories = false;
+        _recommendedAds = [];
+        _featuredStores = [];
+        _categoryAds.clear();
+        _loadedCategoryIndex = 0;
+      });
+    }
 
     // Determina se é novo usuário e define categorias
     if (user != null && user.categoryClicks.isNotEmpty) {
       _isNewUser = false;
       // Usuário com interesses: coloca as categorias favoritas primeiro
       final topCats = user.topCategories;
-      final remaining = _defaultCategoryOrder.where((c) => !topCats.contains(c)).toList();
+      final remaining =
+          _defaultCategoryOrder.where((c) => !topCats.contains(c)).toList();
       _userCategories = [...topCats, ...remaining];
     } else {
       _isNewUser = true;
@@ -263,24 +609,34 @@ class _ForYouScreenState extends State<ForYouScreen> {
       List<AdModel> recommended = [];
 
       if (_isNewUser) {
-        // Novo usuário: mostra os mais populares (mais clicados)
-        recommended = await _firestore.getPopularAds(limit: 6);
-        // Se não há anúncios populares suficientes, completa com os mais recentes
-        if (recommended.length < 6) {
-          final recent = await _firestore.getAds(limit: 6 - recommended.length);
-          final existingIds = recommended.map((a) => a.id).toSet();
-          recommended.addAll(recent.where((a) => !existingIds.contains(a.id)));
-        }
+        final popular = await _firestore.getPopularAds(
+          limit: 30,
+          intent: AdModel.intentSell,
+        );
+        final recent = await _firestore.getAds(
+          limit: 30,
+          intent: AdModel.intentSell,
+        );
+        final existingIds = popular.map((ad) => ad.id).toSet();
+        recommended = [...popular];
+        recommended.addAll(recent.where((a) => !existingIds.contains(a.id)));
       } else {
         // Usuário com interesses: busca pelas top 3 categorias
         final topCats = _userCategories.take(3).toList();
         for (final cat in topCats) {
-          final ads = await _firestore.getAdsByCategory(cat, limit: 2);
+          final ads = await _firestore.getAdsByCategory(
+            cat,
+            limit: 4,
+            intent: AdModel.intentSell,
+          );
           recommended.addAll(ads);
         }
         // Completa com populares se necessário
         if (recommended.length < 6) {
-          final popular = await _firestore.getPopularAds(limit: 6 - recommended.length);
+          final popular = await _firestore.getPopularAds(
+            limit: 12,
+            intent: AdModel.intentSell,
+          );
           final existingIds = recommended.map((a) => a.id).toSet();
           recommended.addAll(popular.where((a) => !existingIds.contains(a.id)));
         }
@@ -288,7 +644,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
 
       if (mounted) {
         setState(() {
-          _recommendedAds = recommended.take(6).toList();
+          _recommendedAds = recommended.take(12).toList();
           _loadingRecommended = false;
         });
       }
@@ -315,7 +671,11 @@ class _ForYouScreenState extends State<ForYouScreen> {
   Future<void> _loadCategoryAds(String category) async {
     if (_categoryAds.containsKey(category)) return;
     try {
-      final ads = await _firestore.getAdsByCategory(category, limit: 6);
+      final ads = await _firestore.getAdsByCategory(
+        category,
+        limit: 12,
+        intent: AdModel.intentSell,
+      );
       if (mounted) {
         setState(() {
           _categoryAds[category] = ads;
@@ -343,6 +703,51 @@ class _ForYouScreenState extends State<ForYouScreen> {
     }
   }
 
+  bool _matchesSelectedLocation(AdModel ad) {
+    return _matchesSelectedLocationRule(
+      ad: ad,
+      locationScope: widget.locationScope,
+      locationRegionKey: widget.locationRegionKey,
+      locationLabel: widget.locationLabel,
+      searchLat: widget.searchLat,
+      searchLng: widget.searchLng,
+      searchRadiusKm: widget.searchRadiusKm,
+      distance: _distance,
+    );
+  }
+
+  int? _roundedDistanceKmForAd(AdModel ad) {
+    return _roundedDistanceKm(
+      ad,
+      _distance,
+      widget.locationScope,
+      widget.searchLat,
+      widget.searchLng,
+    );
+  }
+
+  String? _badgeLabelForAd() {
+    if (widget.locationScope == 'state') return 'Na regiao';
+    if (widget.locationScope == 'country') return 'Brasil';
+    return null;
+  }
+
+  SliverGridDelegate _gridDelegate(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final crossAxisCount = width >= 900
+        ? 4
+        : width >= 680
+            ? 3
+            : 2;
+
+    return SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: crossAxisCount,
+      mainAxisSpacing: 6,
+      crossAxisSpacing: 6,
+      mainAxisExtent: 236,
+    );
+  }
+
   void _navigateToAd(AdModel ad) {
     // Rastreia o clique na categoria
     context.read<UserProvider>().trackCategoryClick(ad.category);
@@ -365,6 +770,12 @@ class _ForYouScreenState extends State<ForYouScreen> {
         builder: (_) => CategoryAdsScreen(
           category: category,
           icon: _getCategoryIcon(category),
+          locationScope: widget.locationScope,
+          locationRegionKey: widget.locationRegionKey,
+          searchLat: widget.searchLat,
+          searchLng: widget.searchLng,
+          searchRadiusKm: widget.searchRadiusKm,
+          locationLabel: widget.locationLabel,
         ),
       ),
     );
@@ -372,174 +783,233 @@ class _ForYouScreenState extends State<ForYouScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final marketplaceRefreshTick =
+        context.watch<UserProvider>().marketplaceRefreshTick;
+    if (_lastMarketplaceRefreshTick != marketplaceRefreshTick) {
+      _lastMarketplaceRefreshTick = marketplaceRefreshTick;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadInitialData();
+      });
+    }
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final user = context.watch<UserProvider>().user;
-    final userName = user?.firstName ?? 'Visitante';
+    final userName = user?.firstName ?? 'Usuário';
+    final recommendedAds = _applyFilters(_recommendedAds).take(6).toList();
+    final hour = DateTime.now().hour;
+    const marketBlue = Color(0xFF0066EE);
+    final greeting = hour >= 5 && hour < 12
+        ? 'Bom dia'
+        : hour >= 12 && hour < 19
+            ? 'Boa tarde'
+            : 'Boa noite';
+    final headerSubtitle = (user == null || _isNewUser)
+        ? 'Os anuncios de destaque mais populares na comunidade'
+        : 'Separamos esses ultimos anuncios de acordo com seu gosto';
 
-    return CustomScrollView(
-      controller: _scrollController,
-      slivers: [
-        // ── Header "Olá, Usuário!" ──────────────────────────────
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Olá, $userName!',
-                  style: GoogleFonts.outfit(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
-                ).animate().fadeIn(duration: 400.ms).slideX(begin: -0.1, end: 0),
-                const SizedBox(height: 4),
-                Text(
-                  _isNewUser
-                      ? 'Confira os anúncios mais populares do momento'
-                      : 'Selecionamos esses anúncios para você',
-                  style: GoogleFonts.outfit(
-                    fontSize: 14,
-                    color: isDark ? AppTheme.whiteMuted : Colors.grey.shade600,
-                  ),
-                ).animate(delay: 100.ms).fadeIn(duration: 400.ms),
-              ],
-            ),
-          ),
-        ),
-
-        // ── Recomendados (6 cards em grid) ──────────────────────
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
-        _loadingRecommended
-            ? const SliverToBoxAdapter(
-                child: Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(40),
-                    child: CircularProgressIndicator(color: AppTheme.facebookBlue),
-                  ),
-                ),
-              )
-            : _recommendedAds.isEmpty
-                ? SliverToBoxAdapter(
-                    child: _emptyState(
-                      'Nenhum anúncio disponível ainda',
-                      'Seja o primeiro a anunciar no MarketView!',
-                      Icons.auto_awesome_rounded,
-                    ),
-                  )
-                : SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverGrid(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) => AdCard(
-                          ad: _recommendedAds[index],
-                          index: index,
-                          onTap: () => _navigateToAd(_recommendedAds[index]),
-                        ),
-                        childCount: _recommendedAds.length,
-                      ),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                        childAspectRatio: 0.68,
-                      ),
-                    ),
-                  ),
-
-        // ── Botão "Ver mais recomendados" ───────────────────────
-        if (!_loadingRecommended && _recommendedAds.isNotEmpty)
+    return RefreshIndicator(
+      onRefresh: _loadInitialData,
+      child: CustomScrollView(
+        controller: _scrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          // -- Header principal -----------------------------------
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: OutlinedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AllRecommendedScreen(
-                        topCategories: _isNewUser ? [] : _userCategories.take(3).toList(),
+              padding: const EdgeInsets.fromLTRB(12, 14, 16, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$greeting, ',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 27,
+                            height: 1.06,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.8,
+                            color: isDark ? Colors.white : _marketCharcoal,
+                          ),
+                        ),
+                        TextSpan(
+                          text: userName,
+                          style: GoogleFonts.montserrat(
+                            fontSize: 27,
+                            height: 1.06,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.8,
+                            color: marketBlue,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                      .animate()
+                      .fadeIn(duration: 400.ms)
+                      .slideX(begin: -0.08, end: 0),
+                  const SizedBox(height: 8),
+                  Text(
+                    headerSubtitle,
+                    style: GoogleFonts.montserrat(
+                      fontSize: 13.5,
+                      height: 1.35,
+                      color: isDark ? AppTheme.whiteSecondary : _marketMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ).animate(delay: 100.ms).fadeIn(duration: 400.ms),
+                ],
+              ),
+            ),
+          ),
+
+          // -- Recomendados (6 cards em grid) ----------------------
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+          _loadingRecommended
+              ? const SliverToBoxAdapter(
+                  child: Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(40),
+                      child: CircularProgressIndicator(
+                          color: AppTheme.facebookBlue),
+                    ),
+                  ),
+                )
+              : recommendedAds.isEmpty
+                  ? SliverToBoxAdapter(
+                      child: _emptyState(
+                        'Nenhum anúncio disponível nessa localização',
+                        'Tente ampliar o raio ou trocar a região selecionada.',
+                        Icons.auto_awesome_rounded,
+                      ),
+                    )
+                  : SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 0),
+                      sliver: SliverGrid(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) => AdCard(
+                            ad: recommendedAds[index],
+                            index: index,
+                            badgeLabel: _badgeLabelForAd(),
+                            distanceKm:
+                                _roundedDistanceKmForAd(recommendedAds[index]),
+                            onTap: () => _navigateToAd(recommendedAds[index]),
+                          ),
+                          childCount: recommendedAds.length,
+                        ),
+                        gridDelegate: _gridDelegate(context),
                       ),
                     ),
-                  );
-                },
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: AppTheme.facebookBlue),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Text(
-                  'Ver mais recomendados',
-                  style: GoogleFonts.outfit(
-                    color: AppTheme.facebookBlue,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-              ).animate(delay: 200.ms).fadeIn(),
-            ),
-          ),
 
-        // ── Seção "Lojas Destaque" ──────────────────────────────
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Lojas Destaque',
-                  style: GoogleFonts.outfit(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    color: isDark ? Colors.white : Colors.black87,
+          // -- Botão "Ver mais recomendados" -----------------------
+          if (!_loadingRecommended && recommendedAds.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AllRecommendedScreen(
+                          topCategories: _isNewUser
+                              ? []
+                              : _userCategories.take(3).toList(),
+                          locationScope: widget.locationScope,
+                          locationRegionKey: widget.locationRegionKey,
+                          searchLat: widget.searchLat,
+                          searchLng: widget.searchLng,
+                          searchRadiusKm: widget.searchRadiusKm,
+                          locationLabel: widget.locationLabel,
+                        ),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(
+                      color: isDark ? AppTheme.blackBorder : _marketLine,
+                    ),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
-                ),
-                GestureDetector(
-                  onTap: widget.onViewMoreStores,
                   child: Text(
-                    'Ver mais',
-                    style: GoogleFonts.outfit(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.facebookBlue,
+                    'Ver mais recomendados',
+                    style: GoogleFonts.roboto(
+                      color: isDark ? AppTheme.whiteSecondary : _marketMuted,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 13,
                     ),
                   ),
-                ),
-              ],
-            ).animate(delay: 300.ms).fadeIn(),
-          ),
-        ),
+                ).animate(delay: 200.ms).fadeIn(),
+              ),
+            ),
 
-        SliverToBoxAdapter(
-          child: _buildStoresCarousel(isDark),
-        ),
-
-        // ── Categorias por interesse (lazy loaded) ──────────────
-        ..._buildCategorySections(isDark),
-
-        // ── Loading indicator para mais categorias ──────────────
-        if (_loadingMoreCategories)
-          const SliverToBoxAdapter(
+          // -- Seção "Lojas Destaque" ------------------------------
+          SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: CircularProgressIndicator(color: AppTheme.facebookBlue)),
+              padding: const EdgeInsets.fromLTRB(12, 24, 12, 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Lojas Destaque',
+                    style: GoogleFonts.roboto(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? Colors.white : _marketCharcoal,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: widget.onViewMoreStores,
+                    child: Text(
+                      'Ver mais',
+                      style: GoogleFonts.roboto(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: isDark ? AppTheme.whiteSecondary : _marketMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ).animate(delay: 300.ms).fadeIn(),
             ),
           ),
 
-        // Espaçamento final
-        const SliverToBoxAdapter(child: SizedBox(height: 100)),
-      ],
+          SliverToBoxAdapter(
+            child: _buildStoresCarousel(isDark),
+          ),
+
+          // -- Categorias por interesse (lazy loaded) --------------
+          ..._buildCategorySections(isDark),
+
+          // -- Loading indicator para mais categorias --------------
+          if (_loadingMoreCategories)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(
+                    child: CircularProgressIndicator(
+                        color: AppTheme.facebookBlue)),
+              ),
+            ),
+
+          // Espaçamento final
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
+        ],
+      ),
     );
   }
 
-  // ── Carrossel de Lojas ──────────────────────────────────────────────────
+  // -- Carrossel de Lojas --------------------------------------------------
   Widget _buildStoresCarousel(bool isDark) {
     if (_loadingStores) {
       return const Padding(
         padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator(color: AppTheme.facebookBlue)),
+        child: Center(
+            child: CircularProgressIndicator(color: AppTheme.facebookBlue)),
       );
     }
 
@@ -548,32 +1018,35 @@ class _ForYouScreenState extends State<ForYouScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         child: Text(
           'Nenhuma loja cadastrada no momento',
-          style: GoogleFonts.outfit(color: Colors.grey, fontSize: 14),
+          style: GoogleFonts.roboto(color: _marketMuted, fontSize: 14),
         ),
       );
     }
 
     return SizedBox(
-      height: 148,
+      height: 154,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         // Mostra todas as lojas + botão "ver mais" no final
         itemCount: _featuredStores.length + 1,
         itemBuilder: (context, index) {
           if (index == _featuredStores.length) {
             // Botão "Ver mais" no final do carrossel
             return Padding(
-              padding: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.only(right: 8),
               child: GestureDetector(
                 onTap: widget.onViewMoreStores,
                 child: Container(
-                  width: 100,
+                  width: 96,
                   decoration: BoxDecoration(
-                    color: isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
+                    color:
+                        isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
-                      color: isDark ? AppTheme.blackBorder : const Color(0xFFE0E0E0),
+                      color: isDark
+                          ? AppTheme.blackBorder
+                          : const Color(0xFFE0E0E0),
                     ),
                   ),
                   child: Column(
@@ -583,18 +1056,20 @@ class _ForYouScreenState extends State<ForYouScreen> {
                         width: 44,
                         height: 44,
                         decoration: BoxDecoration(
-                          color: AppTheme.facebookBlue.withOpacity(0.1),
+                          color: AppTheme.facebookBlue.withValues(alpha: 0.1),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.arrow_forward_rounded, color: AppTheme.facebookBlue, size: 22),
+                        child: const Icon(Icons.arrow_forward_rounded,
+                            color: AppTheme.facebookBlue, size: 22),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Ver mais',
-                        style: GoogleFonts.outfit(
-                          color: AppTheme.facebookBlue,
+                        style: GoogleFonts.roboto(
+                          color:
+                              isDark ? AppTheme.whiteSecondary : _marketMuted,
                           fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
@@ -606,7 +1081,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
 
           final store = _featuredStores[index];
           return Padding(
-            padding: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.only(right: 8),
             child: GestureDetector(
               onTap: () {
                 Navigator.push(
@@ -615,21 +1090,25 @@ class _ForYouScreenState extends State<ForYouScreen> {
                     builder: (_) => SellerProfileScreen(
                       sellerId: store.ownerId,
                       sellerName: store.name,
+                      storeId: store.id,
                     ),
                   ),
                 );
               },
               child: Container(
-                width: 104,
+                width: 110,
                 decoration: BoxDecoration(
                   color: isDark ? AppTheme.blackCard : Colors.white,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8),
+                    color:
+                        isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8),
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(isDark ? 0.2 : 0.04),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.2 : 0.04,
+                      ),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),
@@ -640,12 +1119,12 @@ class _ForYouScreenState extends State<ForYouScreen> {
                   children: [
                     // Foto de perfil da loja
                     Container(
-                      width: 54,
-                      height: 54,
+                      width: 60,
+                      height: 60,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: AppTheme.facebookBlue.withOpacity(0.3),
+                          color: AppTheme.facebookBlue.withValues(alpha: 0.3),
                           width: 2,
                         ),
                       ),
@@ -654,16 +1133,20 @@ class _ForYouScreenState extends State<ForYouScreen> {
                             ? Image.network(
                                 store.logo!,
                                 fit: BoxFit.cover,
-                                width: 54,
-                                height: 54,
+                                width: 60,
+                                height: 60,
                                 errorBuilder: (_, __, ___) => Container(
-                                  color: AppTheme.facebookBlue.withOpacity(0.1),
-                                  child: const Icon(Icons.store_rounded, color: AppTheme.facebookBlue, size: 26),
+                                  color: AppTheme.facebookBlue
+                                      .withValues(alpha: 0.1),
+                                  child: const Icon(Icons.store_rounded,
+                                      color: AppTheme.facebookBlue, size: 26),
                                 ),
                               )
                             : Container(
-                                color: AppTheme.facebookBlue.withOpacity(0.1),
-                                child: const Icon(Icons.store_rounded, color: AppTheme.facebookBlue, size: 26),
+                                color: AppTheme.facebookBlue
+                                    .withValues(alpha: 0.1),
+                                child: const Icon(Icons.store_rounded,
+                                    color: AppTheme.facebookBlue, size: 26),
                               ),
                       ),
                     ),
@@ -673,10 +1156,10 @@ class _ForYouScreenState extends State<ForYouScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                       child: Text(
                         store.name,
-                        style: GoogleFonts.outfit(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: isDark ? Colors.white : Colors.black87,
+                        style: GoogleFonts.montserrat(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : _marketCharcoal,
                         ),
                         textAlign: TextAlign.center,
                         maxLines: 2,
@@ -688,14 +1171,17 @@ class _ForYouScreenState extends State<ForYouScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.star_rounded, color: Color(0xFFFFC107), size: 13),
+                        const Icon(Icons.star_rounded,
+                            color: Color(0xFFFFC107), size: 13),
                         const SizedBox(width: 2),
                         Text(
-                          store.rating > 0 ? store.rating.toStringAsFixed(1) : 'Novo',
-                          style: GoogleFonts.outfit(
+                          store.rating > 0
+                              ? store.rating.toStringAsFixed(1)
+                              : 'Novo',
+                          style: GoogleFonts.roboto(
                             fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? AppTheme.whiteMuted : Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                            color: isDark ? AppTheme.whiteMuted : _marketMuted,
                           ),
                         ),
                       ],
@@ -703,7 +1189,8 @@ class _ForYouScreenState extends State<ForYouScreen> {
                   ],
                 ),
               ),
-            ).animate(delay: Duration(milliseconds: index * 40))
+            )
+                .animate(delay: Duration(milliseconds: index * 40))
                 .fadeIn(duration: 300.ms)
                 .slideX(begin: 0.15, end: 0),
           );
@@ -712,21 +1199,24 @@ class _ForYouScreenState extends State<ForYouScreen> {
     );
   }
 
-  // ── Seções de Categorias ────────────────────────────────────────────────
+  // -- Seções de Categorias ------------------------------------------------
   List<Widget> _buildCategorySections(bool isDark) {
     final widgets = <Widget>[];
 
-    for (int i = 0; i < _loadedCategoryIndex && i < _userCategories.length; i++) {
+    for (int i = 0;
+        i < _loadedCategoryIndex && i < _userCategories.length;
+        i++) {
       final category = _userCategories[i];
-      final ads = _categoryAds[category];
+      final ads =
+          _applyFilters(_categoryAds[category] ?? const []).take(6).toList();
 
-      if (ads == null || ads.isEmpty) continue;
+      if (ads.isEmpty) continue;
 
       // Título da categoria
       widgets.add(
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
+            padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -736,7 +1226,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
                       width: 34,
                       height: 34,
                       decoration: BoxDecoration(
-                        color: AppTheme.facebookBlue.withOpacity(0.1),
+                        color: AppTheme.facebookBlue.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Icon(
@@ -747,11 +1237,11 @@ class _ForYouScreenState extends State<ForYouScreen> {
                     ),
                     const SizedBox(width: 10),
                     Text(
-                      category,
-                      style: GoogleFonts.outfit(
+                      AdModel.displayLabel(category),
+                      style: GoogleFonts.roboto(
                         fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: isDark ? Colors.white : Colors.black87,
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? Colors.white : _marketCharcoal,
                       ),
                     ),
                   ],
@@ -760,10 +1250,10 @@ class _ForYouScreenState extends State<ForYouScreen> {
                   onTap: () => _navigateToCategory(category),
                   child: Text(
                     'Ver mais',
-                    style: GoogleFonts.outfit(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.facebookBlue,
+                    style: GoogleFonts.roboto(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: isDark ? AppTheme.whiteSecondary : _marketMuted,
                     ),
                   ),
                 ),
@@ -776,22 +1266,19 @@ class _ForYouScreenState extends State<ForYouScreen> {
       // Grid de anúncios da categoria
       widgets.add(
         SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 0),
           sliver: SliverGrid(
             delegate: SliverChildBuilderDelegate(
               (context, index) => AdCard(
                 ad: ads[index],
                 index: index,
+                badgeLabel: _badgeLabelForAd(),
+                distanceKm: _roundedDistanceKmForAd(ads[index]),
                 onTap: () => _navigateToAd(ads[index]),
               ),
               childCount: ads.length,
             ),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 0.68,
-            ),
+            gridDelegate: _gridDelegate(context),
           ),
         ),
       );
@@ -804,15 +1291,18 @@ class _ForYouScreenState extends State<ForYouScreen> {
             child: OutlinedButton(
               onPressed: () => _navigateToCategory(category),
               style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                side: BorderSide(color: isDark ? AppTheme.blackBorder : Colors.grey.shade300),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                side: BorderSide(
+                  color: isDark ? AppTheme.blackBorder : _marketLine,
+                ),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
               ),
               child: Text(
-                'Ver mais em $category',
-                style: GoogleFonts.outfit(
-                  color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade700,
-                  fontWeight: FontWeight.w600,
+                'Ver mais em ${AdModel.displayLabel(category)}',
+                style: GoogleFonts.roboto(
+                  color: isDark ? AppTheme.whiteSecondary : _marketMuted,
+                  fontWeight: FontWeight.w500,
                   fontSize: 13,
                 ),
               ),
@@ -834,16 +1324,17 @@ class _ForYouScreenState extends State<ForYouScreen> {
           const SizedBox(height: 16),
           Text(
             title,
-            style: GoogleFonts.outfit(
+            style: GoogleFonts.roboto(
               fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Colors.grey,
+              fontWeight: FontWeight.w600,
+              color: _marketMuted,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             subtitle,
-            style: GoogleFonts.outfit(fontSize: 13, color: Colors.grey.shade500),
+            style:
+                GoogleFonts.roboto(fontSize: 13, color: Colors.grey.shade500),
             textAlign: TextAlign.center,
           ),
         ],
@@ -853,18 +1344,89 @@ class _ForYouScreenState extends State<ForYouScreen> {
 
   IconData _getCategoryIcon(String category) {
     switch (category) {
-      case 'Eletrônicos': return Icons.devices_rounded;
-      case 'Veículos': return Icons.directions_car_rounded;
-      case 'Imóveis': return Icons.home_rounded;
-      case 'Móveis': return Icons.chair_rounded;
-      case 'Roupas': return Icons.checkroom_rounded;
-      case 'Esportes': return Icons.sports_soccer_rounded;
-      case 'Design': return Icons.design_services_rounded;
-      case 'Educação': return Icons.school_rounded;
-      case 'Saúde': return Icons.health_and_safety_rounded;
-      case 'Beleza': return Icons.face_retouching_natural_rounded;
-      case 'Animais': return Icons.pets_rounded;
-      default: return Icons.sell_rounded;
+      case 'Eletronicos':
+      case 'Eletrônicos':
+        return Icons.devices_rounded;
+      case 'Veiculos':
+      case 'Veículos':
+        return Icons.directions_car_rounded;
+      case 'Imoveis':
+      case 'Imóveis':
+        return Icons.home_rounded;
+      case 'Moveis':
+      case 'Móveis':
+        return Icons.chair_rounded;
+      case 'Roupas':
+        return Icons.checkroom_rounded;
+      case 'Esportes':
+        return Icons.sports_soccer_rounded;
+      case 'Assistencia tecnica':
+        return Icons.build_circle_rounded;
+      case 'Aulas e cursos':
+      case 'Educação':
+        return Icons.school_rounded;
+      case 'Consultoria':
+        return Icons.support_agent_rounded;
+      case 'Design':
+        return Icons.design_services_rounded;
+      case 'Design e marketing':
+        return Icons.campaign_rounded;
+      case 'Eventos':
+        return Icons.celebration_rounded;
+      case 'Fretes e mudancas':
+        return Icons.local_shipping_rounded;
+      case 'Limpeza':
+        return Icons.cleaning_services_rounded;
+      case 'Reformas e manutencao':
+        return Icons.handyman_rounded;
+      case 'Saude e bem-estar':
+      case 'Saúde':
+        return Icons.health_and_safety_rounded;
+      case 'Beleza e estetica':
+      case 'Beleza':
+        return Icons.content_cut_rounded;
+      case 'Servicos pet':
+      case 'Animais':
+        return Icons.pets_rounded;
+      case 'Outros servicos':
+        return Icons.miscellaneous_services_rounded;
+      default:
+        return Icons.sell_rounded;
     }
+  }
+
+  List<AdModel> _applyFilters(List<AdModel> source) {
+    final filtered = source.where((ad) {
+      if (!_matchesSelectedLocation(ad)) return false;
+      return widget.filters.matchesAd(ad);
+    }).toList();
+
+    if (widget.locationScope == 'city') {
+      filtered.sort((a, b) {
+        final aDistance = _distanceKmForAd(
+                a, _distance, widget.searchLat, widget.searchLng) ??
+            double.infinity;
+        final bDistance = _distanceKmForAd(
+                b, _distance, widget.searchLat, widget.searchLng) ??
+            double.infinity;
+        return aDistance.compareTo(bDistance);
+      });
+    }
+
+    switch (widget.filters.sort) {
+      case MarketplaceSort.newest:
+        filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+      case MarketplaceSort.priceLow:
+        filtered.sort((a, b) => a.price.compareTo(b.price));
+        break;
+      case MarketplaceSort.priceHigh:
+        filtered.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      case MarketplaceSort.recommended:
+        break;
+    }
+
+    return filtered;
   }
 }

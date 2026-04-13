@@ -13,12 +13,24 @@ import '../models/user_model.dart';
 import '../services/cep_service.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 const List<String> storeCategories = [
-  'Eletrônicos', 'Veículos', 'Imóveis', 'Móveis', 'Roupas',
-  'Esportes', 'Design', 'Educação', 'Saúde', 'Beleza',
-  'Animais', 'Alimentação', 'Serviços Gerais', 'Outros',
+  'Eletrônicos',
+  'Veículos',
+  'Imóveis',
+  'Móveis',
+  'Roupas',
+  'Esportes',
+  'Design',
+  'Educação',
+  'Saúde',
+  'Beleza',
+  'Animais',
+  'Alimentação',
+  'Serviços Gerais',
+  'Outros',
 ];
 
 class CreateStoreScreen extends StatefulWidget {
@@ -38,6 +50,8 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
   String _storeName = '';
   String _storeCategory = storeCategories[0];
   String _storeType = 'produto';
+  bool _hasDelivery = false;
+  bool _hasInstallments = false;
   File? _logoFile;
   File? _bannerFile;
   String _description = '';
@@ -50,6 +64,7 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
   final _cepService = CepService();
   final _firestoreService = FirestoreService();
   final _cloudinary = CloudinaryService();
+  final _storage = StorageService();
   final _mapController = MapController();
   final _cepMask = MaskTextInputFormatter(mask: '#####-###');
   final _docMask = MaskTextInputFormatter(
@@ -91,9 +106,13 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
           state: result.state,
         );
       });
-      final coords = await _cepService.geocode('${result.street}, ${result.neighborhood}, ${result.city}, ${result.state}, Brasil');
+      final coords = await _cepService.geocode(
+          '${result.street}, ${result.neighborhood}, ${result.city}, ${result.state}, Brasil');
       if (coords != null) {
-        setState(() { _mapLat = coords.lat; _mapLng = coords.lng; });
+        setState(() {
+          _mapLat = coords.lat;
+          _mapLng = coords.lng;
+        });
         _mapController.move(LatLng(coords.lat, coords.lng), 14);
       }
     }
@@ -113,6 +132,8 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
         name: _storeName,
         category: _storeCategory,
         type: _storeType,
+        hasDelivery: _hasDelivery,
+        hasInstallments: _hasInstallments,
         description: _description,
         address: _address,
         createdAt: DateTime.now(),
@@ -120,48 +141,92 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
 
       final storeId = await _firestoreService.createStore(store);
 
-      // Upload logo e banner usando Cloudinary
-      String? logoUrl;
-      String? bannerUrl;
-      if (_logoFile != null) {
-        logoUrl = await _cloudinary.uploadStoreLogo(storeId, _logoFile!);
-      }
-      if (_bannerFile != null) {
-        bannerUrl = await _cloudinary.uploadStoreBanner(storeId, _bannerFile!);
-      }
+      final logoUrl = await _uploadStoreImage(
+        storeId: storeId,
+        file: _logoFile,
+        kind: _StoreImageKind.logo,
+      );
+      final bannerUrl = await _uploadStoreImage(
+        storeId: storeId,
+        file: _bannerFile,
+        kind: _StoreImageKind.banner,
+      );
 
-      // Atualiza a loja com as URLs das imagens
       final updates = <String, dynamic>{};
-      if (logoUrl != null) updates['logo'] = logoUrl;
-      if (bannerUrl != null) updates['banner'] = bannerUrl;
+      if (logoUrl != null && logoUrl.isNotEmpty) updates['logo'] = logoUrl;
+      if (bannerUrl != null && bannerUrl.isNotEmpty) {
+        updates['banner'] = bannerUrl;
+      }
       if (updates.isNotEmpty) {
         await _firestoreService.updateStore(storeId, updates);
       }
 
-      // Atualiza o usuário
-      await _firestoreService.updateUser(widget.userId, {
-        'hasStore': true,
-        'storeId': storeId,
-      });
+      final savedStore = await _firestoreService.getStore(storeId);
+      final hasSavedLogo =
+          savedStore?.logo != null && savedStore!.logo!.trim().isNotEmpty;
+      final hasSavedBanner =
+          savedStore?.banner != null && savedStore!.banner!.trim().isNotEmpty;
 
-      if (mounted) {
-        // Atualiza o provider local para refletir que o usuário agora tem uma loja
-        context.read<UserProvider>().refresh();
+      await _firestoreService.addStoreToUser(widget.userId, storeId);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Loja criada com sucesso! 🎉',
-                style: GoogleFonts.outfit(color: Colors.white)),
-            backgroundColor: AppTheme.success,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-        Navigator.of(context).popUntil((r) => r.isFirst);
+      if (!mounted) return;
+      // Atualiza o provider local para refletir que o usuário agora tem uma loja
+      final userProvider = context.read<UserProvider>();
+      await userProvider.refresh();
+      if (!mounted) return;
+      userProvider.notifyMarketplaceChanged();
+
+      final uploadFailures = <String>[];
+      if (_logoFile != null && !hasSavedLogo) {
+        uploadFailures.add('logomarca');
       }
+      if (_bannerFile != null && !hasSavedBanner) {
+        uploadFailures.add('banner');
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            uploadFailures.isEmpty
+                ? 'Loja criada com sucesso! 🎉'
+                : 'Loja criada, mas houve falha ao salvar: ${uploadFailures.join(' e ')}.',
+            style: GoogleFonts.roboto(color: Colors.white),
+          ),
+          backgroundColor:
+              uploadFailures.isEmpty ? AppTheme.success : AppTheme.error,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      Navigator.of(context).popUntil((r) => r.isFirst);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<String?> _uploadStoreImage({
+    required String storeId,
+    required File? file,
+    required _StoreImageKind kind,
+  }) async {
+    if (file == null) return null;
+
+    final cloudinaryUrl = kind == _StoreImageKind.logo
+        ? await _cloudinary.uploadStoreLogo(storeId, file)
+        : await _cloudinary.uploadStoreBanner(storeId, file);
+    if (cloudinaryUrl != null && cloudinaryUrl.trim().isNotEmpty) {
+      return cloudinaryUrl;
+    }
+
+    final firebaseUrl = kind == _StoreImageKind.logo
+        ? await _storage.uploadStoreLogo(storeId, file)
+        : await _storage.uploadStoreBanner(storeId, file);
+    if (firebaseUrl != null && firebaseUrl.trim().isNotEmpty) {
+      return firebaseUrl;
+    }
+
+    return null;
   }
 
   @override
@@ -178,9 +243,7 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
         backgroundColor: bg,
         elevation: 0,
         leading: GestureDetector(
-          onTap: _currentPage == 0
-              ? () => Navigator.pop(context)
-              : _prevPage,
+          onTap: _currentPage == 0 ? () => Navigator.pop(context) : _prevPage,
           child: Container(
             margin: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -188,7 +251,9 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(
-              _currentPage == 0 ? Icons.close_rounded : Icons.arrow_back_rounded,
+              _currentPage == 0
+                  ? Icons.close_rounded
+                  : Icons.arrow_back_rounded,
               color: textColor,
               size: 22,
             ),
@@ -198,12 +263,12 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
           children: [
             Text(
               'Criar Loja — ${titles[_currentPage]}',
-              style: GoogleFonts.outfit(
+              style: GoogleFonts.roboto(
                   color: textColor, fontWeight: FontWeight.w700, fontSize: 16),
             ),
             Text(
               'Passo ${_currentPage + 1} de 4',
-              style: GoogleFonts.outfit(color: Colors.grey, fontSize: 12),
+              style: GoogleFonts.roboto(color: Colors.grey, fontSize: 12),
             ),
           ],
         ),
@@ -213,19 +278,21 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
-              children: List.generate(4, (i) => Expanded(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  height: 4,
-                  margin: EdgeInsets.only(right: i < 3 ? 4 : 0),
-                  decoration: BoxDecoration(
-                    color: i <= _currentPage
-                        ? AppTheme.facebookBlue
-                        : Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              )),
+              children: List.generate(
+                  4,
+                  (i) => Expanded(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          height: 4,
+                          margin: EdgeInsets.only(right: i < 3 ? 4 : 0),
+                          decoration: BoxDecoration(
+                            color: i <= _currentPage
+                                ? AppTheme.facebookBlue
+                                : Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      )),
             ),
           ),
         ),
@@ -240,11 +307,15 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
             initialName: _storeName,
             initialCategory: _storeCategory,
             initialType: _storeType,
-            onNext: (name, cat, type) {
+            initialHasDelivery: _hasDelivery,
+            initialHasInstallments: _hasInstallments,
+            onNext: (name, cat, type, hasDelivery, hasInstallments) {
               setState(() {
                 _storeName = name;
                 _storeCategory = cat;
                 _storeType = type;
+                _hasDelivery = hasDelivery;
+                _hasInstallments = hasInstallments;
               });
               _nextPage();
             },
@@ -294,18 +365,27 @@ class _CreateStoreScreenState extends State<CreateStoreScreen> {
 }
 
 // ── PASSO 1 — Nome, categoria, tipo ────────────────────────────────────────
+enum _StoreImageKind {
+  logo,
+  banner,
+}
+
 class _StoreStep1 extends StatefulWidget {
   final bool isDark;
   final String initialName;
   final String initialCategory;
   final String initialType;
-  final Function(String, String, String) onNext;
+  final bool initialHasDelivery;
+  final bool initialHasInstallments;
+  final Function(String, String, String, bool, bool) onNext;
 
   const _StoreStep1({
     required this.isDark,
     required this.initialName,
     required this.initialCategory,
     required this.initialType,
+    required this.initialHasDelivery,
+    required this.initialHasInstallments,
     required this.onNext,
   });
 
@@ -317,6 +397,8 @@ class _StoreStep1State extends State<_StoreStep1> {
   final _nameCtrl = TextEditingController();
   late String _category;
   late String _type;
+  late bool _hasDelivery;
+  late bool _hasInstallments;
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -325,11 +407,14 @@ class _StoreStep1State extends State<_StoreStep1> {
     _nameCtrl.text = widget.initialName;
     _category = widget.initialCategory;
     _type = widget.initialType;
+    _hasDelivery = widget.initialHasDelivery;
+    _hasInstallments = widget.initialHasInstallments;
   }
 
   @override
   Widget build(BuildContext context) {
-    final border = widget.isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
+    final border =
+        widget.isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -340,8 +425,10 @@ class _StoreStep1State extends State<_StoreStep1> {
           children: [
             const SizedBox(height: 8),
             _stepTitle('Identidade da loja', widget.isDark).animate().fadeIn(),
-            _stepSubtitle('Como se chama sua loja e o que ela vende?', widget.isDark)
-                .animate(delay: 60.ms).fadeIn(),
+            _stepSubtitle(
+                    'Como se chama sua loja e o que ela vende?', widget.isDark)
+                .animate(delay: 60.ms)
+                .fadeIn(),
             const SizedBox(height: 28),
 
             _field(
@@ -357,8 +444,10 @@ class _StoreStep1State extends State<_StoreStep1> {
             // Categoria
             Text(
               'Categoria',
-              style: GoogleFonts.outfit(
-                color: widget.isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
+              style: GoogleFonts.roboto(
+                color: widget.isDark
+                    ? AppTheme.whiteSecondary
+                    : Colors.grey.shade600,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -367,21 +456,26 @@ class _StoreStep1State extends State<_StoreStep1> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
-                color: widget.isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5),
+                color: widget.isDark
+                    ? AppTheme.blackLight
+                    : const Color(0xFFF5F5F5),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
                   value: _category,
                   isExpanded: true,
-                  dropdownColor: widget.isDark ? AppTheme.blackLight : Colors.white,
-                  style: GoogleFonts.outfit(
+                  dropdownColor:
+                      widget.isDark ? AppTheme.blackLight : Colors.white,
+                  style: GoogleFonts.roboto(
                     color: widget.isDark ? Colors.white : Colors.black87,
                     fontSize: 14,
                   ),
-                  icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.grey),
-                  items: storeCategories.map((c) =>
-                      DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                      color: Colors.grey),
+                  items: storeCategories
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
                   onChanged: (v) => setState(() => _category = v!),
                 ),
               ),
@@ -392,8 +486,10 @@ class _StoreStep1State extends State<_StoreStep1> {
             // Tipo
             Text(
               'O que sua loja vende?',
-              style: GoogleFonts.outfit(
-                color: widget.isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
+              style: GoogleFonts.roboto(
+                color: widget.isDark
+                    ? AppTheme.whiteSecondary
+                    : Colors.grey.shade600,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -401,13 +497,28 @@ class _StoreStep1State extends State<_StoreStep1> {
             const SizedBox(height: 8),
             Row(
               children: [
-                _typeBtn('produto', 'Produtos', Icons.inventory_2_outlined, border),
+                _typeBtn(
+                    'produto', 'Produtos', Icons.inventory_2_outlined, border),
                 const SizedBox(width: 10),
-                _typeBtn('servico', 'Serviços', Icons.handyman_outlined, border),
+                _typeBtn(
+                    'servico', 'Serviços', Icons.handyman_outlined, border),
                 const SizedBox(width: 10),
                 _typeBtn('ambos', 'Ambos', Icons.all_inclusive_rounded, border),
               ],
             ).animate(delay: 220.ms).fadeIn(),
+
+            const SizedBox(height: 20),
+            _toggleTile(
+              title: 'A loja oferece entrega?',
+              value: _hasDelivery,
+              onChanged: (value) => setState(() => _hasDelivery = value),
+            ).animate(delay: 250.ms).fadeIn(),
+            const SizedBox(height: 10),
+            _toggleTile(
+              title: 'A loja aceita parcelamento?',
+              value: _hasInstallments,
+              onChanged: (value) => setState(() => _hasInstallments = value),
+            ).animate(delay: 280.ms).fadeIn(),
 
             const SizedBox(height: 40),
             _nextButton(
@@ -416,7 +527,13 @@ class _StoreStep1State extends State<_StoreStep1> {
               delay: 300,
               onTap: () {
                 if (_formKey.currentState!.validate()) {
-                  widget.onNext(_nameCtrl.text.trim(), _category, _type);
+                  widget.onNext(
+                    _nameCtrl.text.trim(),
+                    _category,
+                    _type,
+                    _hasDelivery,
+                    _hasInstallments,
+                  );
                 }
               },
             ),
@@ -436,8 +553,10 @@ class _StoreStep1State extends State<_StoreStep1> {
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
             color: isSelected
-                ? AppTheme.facebookBlue.withOpacity(0.1)
-                : (widget.isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5)),
+                ? AppTheme.facebookBlue.withValues(alpha: 0.1)
+                : (widget.isDark
+                    ? AppTheme.blackLight
+                    : const Color(0xFFF5F5F5)),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: isSelected ? AppTheme.facebookBlue : border,
@@ -451,7 +570,7 @@ class _StoreStep1State extends State<_StoreStep1> {
                   size: 20),
               const SizedBox(height: 4),
               Text(label,
-                  style: GoogleFonts.outfit(
+                  style: GoogleFonts.roboto(
                     color: isSelected ? AppTheme.facebookBlue : Colors.grey,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
@@ -459,6 +578,39 @@ class _StoreStep1State extends State<_StoreStep1> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _toggleTile({
+    required String title,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: widget.isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: GoogleFonts.roboto(
+                color: widget.isDark ? Colors.white : Colors.black87,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeThumbColor: AppTheme.facebookBlue,
+          ),
+        ],
       ),
     );
   }
@@ -504,7 +656,7 @@ class _StoreStep2 extends StatelessWidget {
           // Logo
           Text(
             'Logomarca',
-            style: GoogleFonts.outfit(
+            style: GoogleFonts.roboto(
               color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -543,7 +695,7 @@ class _StoreStep2 extends StatelessWidget {
                         const SizedBox(height: 6),
                         Text(
                           'Adicionar\nlogo',
-                          style: GoogleFonts.outfit(
+                          style: GoogleFonts.roboto(
                             color: Colors.grey,
                             fontSize: 11,
                           ),
@@ -560,7 +712,7 @@ class _StoreStep2 extends StatelessWidget {
           // Banner
           Text(
             'Banner da loja',
-            style: GoogleFonts.outfit(
+            style: GoogleFonts.roboto(
               color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -599,7 +751,7 @@ class _StoreStep2 extends StatelessWidget {
                         const SizedBox(height: 8),
                         Text(
                           'Adicionar banner (recomendado: 1200x400)',
-                          style: GoogleFonts.outfit(
+                          style: GoogleFonts.roboto(
                             color: Colors.grey,
                             fontSize: 12,
                           ),
@@ -614,7 +766,7 @@ class _StoreStep2 extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: AppTheme.facebookBlue.withOpacity(0.08),
+              color: AppTheme.facebookBlue.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
@@ -625,7 +777,7 @@ class _StoreStep2 extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Imagens são opcionais, mas deixam sua loja muito mais atrativa!',
-                    style: GoogleFonts.outfit(
+                    style: GoogleFonts.roboto(
                       color: AppTheme.facebookBlue,
                       fontSize: 12,
                     ),
@@ -691,11 +843,13 @@ class _StoreStep3State extends State<_StoreStep3> {
             _field(
               ctrl: _descCtrl,
               label: 'Descrição da loja',
-              hint: 'Conte um pouco sobre sua loja, o que você vende, diferenciais...',
+              hint:
+                  'Conte um pouco sobre sua loja, o que você vende, diferenciais...',
               isDark: widget.isDark,
               delay: 100,
               maxLines: 4,
-              validator: (v) => v!.trim().isEmpty ? 'Informe a descrição' : null,
+              validator: (v) =>
+                  v!.trim().isEmpty ? 'Informe a descrição' : null,
             ),
             const SizedBox(height: 16),
 
@@ -740,18 +894,20 @@ class _StoreStep3State extends State<_StoreStep3> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.amber.withOpacity(0.1),
+                color: Colors.amber.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.security_rounded, color: Colors.amber, size: 16),
+                  const Icon(Icons.security_rounded,
+                      color: Colors.amber, size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Seus dados são protegidos e não serão compartilhados publicamente.',
-                      style: GoogleFonts.outfit(color: Colors.amber.shade800, fontSize: 12),
+                      style: GoogleFonts.roboto(
+                          color: Colors.amber.shade800, fontSize: 12),
                     ),
                   ),
                 ],
@@ -827,7 +983,8 @@ class _StoreStep4State extends State<_StoreStep4> {
     _streetCtrl = TextEditingController(text: widget.address.street);
     _numberCtrl = TextEditingController(text: widget.address.number);
     _complementCtrl = TextEditingController(text: widget.address.complement);
-    _neighborhoodCtrl = TextEditingController(text: widget.address.neighborhood);
+    _neighborhoodCtrl =
+        TextEditingController(text: widget.address.neighborhood);
     _cityCtrl = TextEditingController(text: widget.address.city);
     _stateCtrl = TextEditingController(text: widget.address.state);
   }
@@ -867,7 +1024,8 @@ class _StoreStep4State extends State<_StoreStep4> {
             const SizedBox(height: 8),
             _stepTitle('Endereço da loja', widget.isDark).animate().fadeIn(),
             _stepSubtitle('Onde os clientes podem te encontrar?', widget.isDark)
-                .animate(delay: 60.ms).fadeIn(),
+                .animate(delay: 60.ms)
+                .fadeIn(),
             const SizedBox(height: 24),
 
             Row(
@@ -900,47 +1058,87 @@ class _StoreStep4State extends State<_StoreStep4> {
               ],
             ),
             const SizedBox(height: 12),
-            _field(ctrl: _streetCtrl, label: 'Rua', hint: 'Nome da rua',
-                isDark: widget.isDark, delay: 140, onChanged: (_) => _sync()),
+            _field(
+                ctrl: _streetCtrl,
+                label: 'Rua',
+                hint: 'Nome da rua',
+                isDark: widget.isDark,
+                delay: 140,
+                onChanged: (_) => _sync()),
             const SizedBox(height: 12),
             Row(children: [
-              Expanded(flex: 2, child: _field(ctrl: _numberCtrl, label: 'Número',
-                  hint: 'Nº', isDark: widget.isDark, delay: 160,
-                  keyboardType: TextInputType.number,
-                  validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-                  onChanged: (_) => _sync())),
+              Expanded(
+                  flex: 2,
+                  child: _field(
+                      ctrl: _numberCtrl,
+                      label: 'Número',
+                      hint: 'Nº',
+                      isDark: widget.isDark,
+                      delay: 160,
+                      keyboardType: TextInputType.number,
+                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                      onChanged: (_) => _sync())),
               const SizedBox(width: 12),
-              Expanded(flex: 3, child: _field(ctrl: _complementCtrl,
-                  label: 'Complemento', hint: 'Sala, Loja...', isDark: widget.isDark,
-                  delay: 170, onChanged: (_) => _sync())),
+              Expanded(
+                  flex: 3,
+                  child: _field(
+                      ctrl: _complementCtrl,
+                      label: 'Complemento',
+                      hint: 'Sala, Loja...',
+                      isDark: widget.isDark,
+                      delay: 170,
+                      onChanged: (_) => _sync())),
             ]),
             const SizedBox(height: 12),
-            _field(ctrl: _neighborhoodCtrl, label: 'Bairro', hint: 'Bairro',
-                isDark: widget.isDark, delay: 180, onChanged: (_) => _sync()),
+            _field(
+                ctrl: _neighborhoodCtrl,
+                label: 'Bairro',
+                hint: 'Bairro',
+                isDark: widget.isDark,
+                delay: 180,
+                onChanged: (_) => _sync()),
             const SizedBox(height: 12),
             Row(children: [
-              Expanded(flex: 3, child: _field(ctrl: _cityCtrl, label: 'Cidade',
-                  hint: 'Cidade', isDark: widget.isDark, delay: 190,
-                  onChanged: (_) => _sync())),
+              Expanded(
+                  flex: 3,
+                  child: _field(
+                      ctrl: _cityCtrl,
+                      label: 'Cidade',
+                      hint: 'Cidade',
+                      isDark: widget.isDark,
+                      delay: 190,
+                      onChanged: (_) => _sync())),
               const SizedBox(width: 12),
-              Expanded(flex: 2, child: _field(ctrl: _stateCtrl, label: 'Estado',
-                  hint: 'UF', isDark: widget.isDark, delay: 200,
-                  onChanged: (_) => _sync())),
+              Expanded(
+                  flex: 2,
+                  child: _field(
+                      ctrl: _stateCtrl,
+                      label: 'Estado',
+                      hint: 'UF',
+                      isDark: widget.isDark,
+                      delay: 200,
+                      onChanged: (_) => _sync())),
             ]),
             const SizedBox(height: 16),
 
             // Mapa
             Text('Localização no mapa',
-                style: GoogleFonts.outfit(
-                    color: widget.isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
-                    fontSize: 12, fontWeight: FontWeight.w600)),
+                style: GoogleFonts.roboto(
+                    color: widget.isDark
+                        ? AppTheme.whiteSecondary
+                        : Colors.grey.shade600,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
               child: Container(
                 height: 250, // Aumentado para melhor visualização
                 decoration: BoxDecoration(
-                  border: Border.all(color: widget.isDark ? AppTheme.blackBorder : Colors.grey.shade300),
+                  border: Border.all(
+                      color: widget.isDark
+                          ? AppTheme.blackBorder
+                          : Colors.grey.shade300),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: FlutterMap(
@@ -949,7 +1147,8 @@ class _StoreStep4State extends State<_StoreStep4> {
                     initialCenter: LatLng(widget.mapLat, widget.mapLng),
                     initialZoom: 15,
                     interactionOptions: const InteractionOptions(
-                      flags: InteractiveFlag.all, // Garante que o mapa seja interativo
+                      flags: InteractiveFlag
+                          .all, // Garante que o mapa seja interativo
                     ),
                     onTap: (tapPosition, point) {
                       widget.onAddressChanged(widget.address.copyWith(
@@ -960,7 +1159,8 @@ class _StoreStep4State extends State<_StoreStep4> {
                   ),
                   children: [
                     TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.clearviewdev.marketview',
                     ),
                     MarkerLayer(markers: [
@@ -984,12 +1184,14 @@ class _StoreStep4State extends State<_StoreStep4> {
 
             // Botão finalizar
             GestureDetector(
-              onTap: widget.isLoading ? null : () {
-                if (_formKey.currentState!.validate()) {
-                  _sync();
-                  widget.onFinish();
-                }
-              },
+              onTap: widget.isLoading
+                  ? null
+                  : () {
+                      if (_formKey.currentState!.validate()) {
+                        _sync();
+                        widget.onFinish();
+                      }
+                    },
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -998,23 +1200,30 @@ class _StoreStep4State extends State<_StoreStep4> {
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: [
                     BoxShadow(
-                      color: AppTheme.facebookBlue.withOpacity(0.3),
+                      color: AppTheme.facebookBlue.withValues(alpha: 0.3),
                       blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: widget.isLoading
-                    ? const Center(child: SizedBox(width: 22, height: 22,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5)))
+                    ? const Center(
+                        child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2.5)))
                     : Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.check_circle_rounded, color: Colors.white, size: 22),
+                          const Icon(Icons.check_circle_rounded,
+                              color: Colors.white, size: 22),
                           const SizedBox(width: 8),
                           Text('Criar minha loja!',
-                              style: GoogleFonts.outfit(
-                                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                              style: GoogleFonts.roboto(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700)),
                         ],
                       ),
               ),
@@ -1032,7 +1241,7 @@ class _StoreStep4State extends State<_StoreStep4> {
 Widget _stepTitle(String text, bool isDark) {
   return Text(
     text,
-    style: GoogleFonts.outfit(
+    style: GoogleFonts.roboto(
       color: isDark ? Colors.white : Colors.black87,
       fontSize: 22,
       fontWeight: FontWeight.w800,
@@ -1045,7 +1254,7 @@ Widget _stepSubtitle(String text, bool isDark) {
     padding: const EdgeInsets.only(top: 6),
     child: Text(
       text,
-      style: GoogleFonts.outfit(
+      style: GoogleFonts.roboto(
         color: Colors.grey,
         fontSize: 14,
         height: 1.4,
@@ -1073,7 +1282,7 @@ Widget _field({
     children: [
       Text(
         label,
-        style: GoogleFonts.outfit(
+        style: GoogleFonts.roboto(
           color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
           fontSize: 12,
           fontWeight: FontWeight.w600,
@@ -1088,13 +1297,13 @@ Widget _field({
         maxLines: maxLines,
         onChanged: onChanged,
         validator: validator,
-        style: GoogleFonts.outfit(
+        style: GoogleFonts.roboto(
           color: isDark ? Colors.white : Colors.black87,
           fontSize: 15,
         ),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: GoogleFonts.outfit(color: Colors.grey, fontSize: 14),
+          hintStyle: GoogleFonts.roboto(color: Colors.grey, fontSize: 14),
           suffixIcon: suffix,
           filled: true,
           fillColor: isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5),
@@ -1116,7 +1325,10 @@ Widget _field({
         ),
       ),
     ],
-  ).animate(delay: Duration(milliseconds: delay)).fadeIn().slideY(begin: 0.1, end: 0);
+  )
+      .animate(delay: Duration(milliseconds: delay))
+      .fadeIn()
+      .slideY(begin: 0.1, end: 0);
 }
 
 Widget _nextButton({
@@ -1135,7 +1347,7 @@ Widget _nextButton({
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.facebookBlue.withOpacity(0.3),
+            color: AppTheme.facebookBlue.withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1143,7 +1355,7 @@ Widget _nextButton({
       ),
       child: Text(
         label,
-        style: GoogleFonts.outfit(
+        style: GoogleFonts.roboto(
           color: Colors.white,
           fontSize: 16,
           fontWeight: FontWeight.w700,
@@ -1151,5 +1363,8 @@ Widget _nextButton({
         textAlign: TextAlign.center,
       ),
     ),
-  ).animate(delay: Duration(milliseconds: delay)).fadeIn().slideY(begin: 0.2, end: 0);
+  )
+      .animate(delay: Duration(milliseconds: delay))
+      .fadeIn()
+      .slideY(begin: 0.2, end: 0);
 }

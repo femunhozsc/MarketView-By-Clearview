@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 
+import '../screens/profile_screen.dart';
+
 /// Botão de favorito reutilizável que consome diretamente o UserProvider
 /// para determinar seu estado, garantindo consistência em todas as telas.
 class FavoriteButton extends StatefulWidget {
@@ -21,7 +23,8 @@ class FavoriteButton extends StatefulWidget {
   State<FavoriteButton> createState() => _FavoriteButtonState();
 }
 
-class _FavoriteButtonState extends State<FavoriteButton> with SingleTickerProviderStateMixin {
+class _FavoriteButtonState extends State<FavoriteButton>
+    with SingleTickerProviderStateMixin {
   final FirestoreService _firestore = FirestoreService();
   late AnimationController _animCtrl;
   late Animation<double> _scaleAnim;
@@ -53,7 +56,14 @@ class _FavoriteButtonState extends State<FavoriteButton> with SingleTickerProvid
   Future<void> _toggle() async {
     final userProvider = context.read<UserProvider>();
     final user = userProvider.user;
-    if (user == null || _isLoading) return;
+    if (_isLoading) return;
+    if (user == null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
     _animCtrl.forward(from: 0);
@@ -91,16 +101,18 @@ class _FavoriteButtonState extends State<FavoriteButton> with SingleTickerProvid
       child: ScaleTransition(
         scale: _scaleAnim,
         child: widget.showBackground
-            ? Container(
+              ? Container(
                 width: widget.size,
                 height: widget.size,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Colors.white.withValues(alpha: 0.97),
                   shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.12),
-                      blurRadius: 4,
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),

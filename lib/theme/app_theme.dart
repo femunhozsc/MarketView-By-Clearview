@@ -26,14 +26,14 @@ class AppTheme {
   static const Color lightCard = Color(0xFFFFFFFF);
   static const Color lightBorder = Color(0xFFE0E0E0);
 
-  static TextStyle outfit({
+  static TextStyle textStyle({
     double size = 14,
     FontWeight weight = FontWeight.w400,
     Color color = Colors.black,
     double? height,
     double letterSpacing = 0,
   }) {
-    return GoogleFonts.outfit(
+    return GoogleFonts.roboto(
       fontSize: size,
       fontWeight: weight,
       color: color,
@@ -56,14 +56,30 @@ class AppTheme {
         onSecondary: Colors.white,
         onSurface: Colors.black87,
       ),
-      textTheme: GoogleFonts.outfitTextTheme().apply(
+      textTheme: GoogleFonts.robotoTextTheme().apply(
         bodyColor: Colors.black87,
         displayColor: Colors.black87,
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         iconTheme: IconThemeData(color: Colors.black87),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
@@ -109,14 +125,30 @@ class AppTheme {
         onSecondary: white,
         onSurface: white,
       ),
-      textTheme: GoogleFonts.outfitTextTheme().apply(
+      textTheme: GoogleFonts.robotoTextTheme().apply(
         bodyColor: white,
         displayColor: white,
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: black,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         iconTheme: IconThemeData(color: white),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: blackCard,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: blackCard,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(

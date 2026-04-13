@@ -1,120 +1,179 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+
 import '../models/ad_model.dart';
 import '../providers/user_provider.dart';
+import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/ad_card.dart';
+import '../widgets/edge_swipe_back.dart';
+import '../widgets/favorite_button.dart';
 import 'chat_detail_screen.dart';
+import 'edit_ad_screen.dart';
+import 'image_gallery_viewer_screen.dart';
 import 'my_store_screen.dart';
 import 'seller_profile_screen.dart';
-import '../services/firestore_service.dart';
-import '../widgets/favorite_button.dart';
+import 'profile_screen.dart';
 
 class AdDetailScreen extends StatefulWidget {
-  final AdModel ad;
+  const AdDetailScreen({
+    super.key,
+    required this.ad,
+  });
 
-  const AdDetailScreen({super.key, required this.ad});
+  final AdModel ad;
 
   @override
   State<AdDetailScreen> createState() => _AdDetailScreenState();
 }
 
 class _AdDetailScreenState extends State<AdDetailScreen> {
+  final _firestore = FirestoreService();
+  final _pageController = PageController();
+  final _messageComposer = TextEditingController(
+    text: 'Oi, esse item ainda está disponível?',
+  );
+  int _currentImage = 0;
 
-  String _formatPrice(double price) {
-    final parts = price.toStringAsFixed(2).split('.');
-    final intPart = parts[0];
-    final decPart = parts[1];
-    final buffer = StringBuffer();
-    int count = 0;
-    for (int i = intPart.length - 1; i >= 0; i--) {
-      if (count > 0 && count % 3 == 0) buffer.write('.');
-      buffer.write(intPart[i]);
-      count++;
+  List<String> get _galleryImages => widget.ad.images
+      .where((image) => image.trim().isNotEmpty)
+      .toList(growable: false);
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.ad.id.isNotEmpty) {
+      _firestore.incrementAdClick(widget.ad.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<UserProvider>().trackRecentlyViewedAd(widget.ad.id);
+      });
     }
-    final formatted = buffer.toString().split('').reversed.join('');
-    return 'R\$ $formatted,$decPart';
   }
 
-  void _showContactOptions(BuildContext context, String sellerId) async {
-    final firestore = FirestoreService();
-    final seller = await firestore.getUser(sellerId);
-    
-    if (seller == null || seller.phone.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Vendedor não informou telefone de contato.'))
-        );
-      }
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _messageComposer.dispose();
+    super.dispose();
+  }
+
+  Future<String?> _ensureChat() async {
+    final user = context.read<UserProvider>().user;
+    if (user == null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      );
+      return null;
+    }
+
+    if (user.uid == widget.ad.sellerId || widget.ad.sellerId.isEmpty) {
+      return null;
+    }
+
+    return _firestore.getOrCreateChat(
+      user.uid,
+      widget.ad.sellerId,
+      widget.ad.id,
+      adTitle: widget.ad.title,
+    );
+  }
+
+  Future<void> _openChat() async {
+    final chatId = await _ensureChat();
+    if (chatId == null || !mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatDetailScreen(
+          chatId: chatId,
+          otherUserId: widget.ad.sellerId,
+          otherUserName:
+              widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
+                  ? widget.ad.displaySellerUserName
+                  : widget.ad.displaySellerName,
+          adTitle: widget.ad.title,
+          adId: widget.ad.id,
+          sellerId: widget.ad.sellerId,
+          adPrice: widget.ad.price,
+          adIntent: widget.ad.intent,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openOfferFlow() async {
+    final chatId = await _ensureChat();
+    if (chatId == null || !mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatDetailScreen(
+          chatId: chatId,
+          otherUserId: widget.ad.sellerId,
+          otherUserName:
+              widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
+                  ? widget.ad.displaySellerUserName
+                  : widget.ad.displaySellerName,
+          adTitle: widget.ad.title,
+          adId: widget.ad.id,
+          sellerId: widget.ad.sellerId,
+          adPrice: widget.ad.price,
+          adIntent: widget.ad.intent,
+          openOfferComposerOnLoad: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openEditAd() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => EditAdScreen(ad: widget.ad)),
+    );
+    if (!mounted) return;
+
+    final refreshedAd = await _firestore.getAd(widget.ad.id);
+    if (!mounted) return;
+
+    context.read<UserProvider>().notifyMarketplaceChanged();
+
+    if (refreshedAd == null || !refreshedAd.isActive) {
+      Navigator.pop(context);
       return;
     }
 
-    final phone = seller.phone.replaceAll(RegExp(r'[^0-9]'), '');
-    if (!context.mounted) return;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    if (context.mounted) {
-      showModalBottomSheet(
-        context: context,
-        backgroundColor: isDark ? AppTheme.blackCard : Colors.white,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        builder: (context) => Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Entre em contato',
-                style: GoogleFonts.outfit(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: isDark ? Colors.white : Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 24),
-              _contactBtn(
-                icon: Icons.chat_rounded,
-                label: 'Enviar WhatsApp',
-                color: const Color(0xFF25D366),
-                onTap: () => launchUrl(Uri.parse('https://wa.me/55$phone?text=Olá, vi seu anúncio "${widget.ad.title}" no MarketView!')),
-              ),
-              const SizedBox(height: 12),
-              _contactBtn(
-                icon: Icons.phone_rounded,
-                label: 'Ligar agora',
-                color: AppTheme.facebookBlue,
-                onTap: () => launchUrl(Uri.parse('tel:$phone')),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-      );
-    }
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => AdDetailScreen(ad: refreshedAd)),
+    );
   }
 
-  Widget _contactBtn({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.pop(context);
-        onTap();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+  Future<bool?> _askIfSoldOnMarketView() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Você vendeu no MarketView?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(icon, color: Colors.white),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+            const Text(
+              'Se a venda aconteceu pelo app, vamos vincular o comprador para pedir a avaliacao depois.',
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Sim, eu vendi no MarketView'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Nao, eu nao vendi no MarketView'),
             ),
           ],
         ),
@@ -122,69 +181,292 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
     );
   }
 
-  String _formatKm(int km) {
-    final buffer = StringBuffer();
-    final s = km.toString();
-    int count = 0;
-    for (int i = s.length - 1; i >= 0; i--) {
-      if (count > 0 && count % 3 == 0) buffer.write('.');
-      buffer.write(s[i]);
-      count++;
-    }
-    return '${buffer.toString().split('').reversed.join('')} km';
+  Future<bool> _confirmSoldWithoutBuyer() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Nenhum comprador encontrado'),
+        content: const Text(
+          'Não encontramos conversas sobre esse anúncio. Deseja marcar como vendido mesmo assim?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Marcar como vendido'),
+          ),
+        ],
+      ),
+    );
+
+    return result ?? false;
   }
 
-  String _formatDate(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  Future<Map<String, dynamic>?> _pickBuyerForSale(
+    List<Map<String, dynamic>> candidates,
+  ) {
+    String? selectedBuyerId;
 
-  IconData _getCategoryIcon(String category) {
-    switch (category) {
-      case 'Eletrônicos': return Icons.devices_rounded;
-      case 'Veículos': return Icons.directions_car_rounded;
-      case 'Imóveis': return Icons.home_rounded;
-      case 'Móveis': return Icons.chair_rounded;
-      case 'Roupas': return Icons.checkroom_rounded;
-      case 'Esportes': return Icons.sports_soccer_rounded;
-      case 'Design': return Icons.design_services_rounded;
-      case 'Educação': return Icons.school_rounded;
-      default: return Icons.sell_rounded;
+    return showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Quem comprou esse produto?'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Selecione um dos usuários que conversaram com você sobre este anúncio.',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 320,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: candidates.map((candidate) {
+                        final buyerId = candidate['buyerId'] as String? ?? '';
+                        final buyerName =
+                            candidate['buyerName'] as String? ?? 'Usuario';
+                        final buyerPhoto =
+                            (candidate['buyerPhoto'] as String? ?? '').trim();
+                        final lastMessage =
+                            (candidate['lastMessage'] as String? ?? '').trim();
+                        final isSelected = selectedBuyerId == buyerId;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppTheme.facebookBlue
+                                  : const Color(0xFFE5E7EB),
+                            ),
+                          ),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () {
+                              setDialogState(() => selectedBuyerId = buyerId);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: AppTheme.facebookBlue
+                                        .withValues(alpha: 0.12),
+                                    backgroundImage: buyerPhoto.isNotEmpty
+                                        ? NetworkImage(buyerPhoto)
+                                        : null,
+                                    child: buyerPhoto.isEmpty
+                                        ? Text(
+                                            buyerName[0].toUpperCase(),
+                                            style: GoogleFonts.roboto(
+                                              color: AppTheme.facebookBlue,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          buyerName,
+                                          style: GoogleFonts.roboto(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        if (lastMessage.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            lastMessage,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.roboto(
+                                              color: Colors.grey.shade700,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Icon(
+                                    isSelected
+                                        ? Icons.radio_button_checked_rounded
+                                        : Icons.radio_button_off_rounded,
+                                    color: isSelected
+                                        ? AppTheme.facebookBlue
+                                        : Colors.grey,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: selectedBuyerId == null
+                  ? null
+                  : () => Navigator.pop(
+                        dialogContext,
+                        candidates.firstWhere(
+                          (candidate) =>
+                              candidate['buyerId'] == selectedBuyerId,
+                        ),
+                      ),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _confirmSelectedBuyer(Map<String, dynamic> buyer) async {
+    final buyerName = buyer['buyerName'] as String? ?? 'Usuario';
+    final buyerPhoto = (buyer['buyerPhoto'] as String? ?? '').trim();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirmar comprador'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 38,
+              backgroundColor: AppTheme.facebookBlue.withValues(alpha: 0.12),
+              backgroundImage:
+                  buyerPhoto.isNotEmpty ? NetworkImage(buyerPhoto) : null,
+              child: buyerPhoto.isEmpty
+                  ? Text(
+                      buyerName[0].toUpperCase(),
+                      style: GoogleFonts.roboto(
+                        color: AppTheme.facebookBlue,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 28,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(height: 14),
+            Text(
+              buyerName,
+              style: GoogleFonts.roboto(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Você confirma que foi esse usuário que comprou o anúncio?',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Voltar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+
+    return result ?? false;
+  }
+
+  Future<void> _markAsSold() async {
+    final soldOnMarketView = await _askIfSoldOnMarketView();
+    if (soldOnMarketView == null) return;
+
+    Map<String, dynamic>? selectedBuyer;
+    var shouldCreateReviewRequest = false;
+
+    if (soldOnMarketView) {
+      final candidates = await _firestore.getSaleBuyerCandidates(widget.ad.id);
+      if (!mounted) return;
+
+      if (candidates.isEmpty) {
+        final proceedWithoutBuyer = await _confirmSoldWithoutBuyer();
+        if (!proceedWithoutBuyer) return;
+      } else {
+        selectedBuyer = await _pickBuyerForSale(candidates);
+        if (selectedBuyer == null) return;
+
+        final confirmedBuyer = await _confirmSelectedBuyer(selectedBuyer);
+        if (!confirmedBuyer) return;
+        shouldCreateReviewRequest = true;
+      }
+    }
+
+    try {
+      await _firestore.markAdAsSold(
+        ad: widget.ad,
+        soldOnMarketView: shouldCreateReviewRequest,
+        buyerId: selectedBuyer?['buyerId'] as String?,
+        buyerName: selectedBuyer?['buyerName'] as String?,
+        buyerPhoto: selectedBuyer?['buyerPhoto'] as String?,
+        chatId: selectedBuyer?['chatId'] as String?,
+      );
+      if (!mounted) return;
+
+      context.read<UserProvider>().notifyMarketplaceChanged();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shouldCreateReviewRequest
+                ? 'Anuncio vendido e comprador vinculado para avaliacao.'
+                : 'Anuncio marcado como vendido.',
+          ),
+        ),
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nao foi possivel marcar como vendido: $e')),
+      );
     }
   }
 
-  Color _getTypeColor(String type) {
-    switch (type) {
-      case 'servico': return const Color(0xFF9B59B6);
-      case 'loja': return const Color(0xFF27AE60);
-      default: return AppTheme.facebookBlue;
-    }
-  }
-
-  String _getTypeLabel(String type) {
-    switch (type) {
-      case 'servico': return 'Serviço';
-      case 'loja': return 'Loja';
-      default: return 'Produto';
-    }
-  }
-
-  int _currentImgIndex = 0;
-  final _firestoreService = FirestoreService();
-
-  @override
-  void initState() {
-    super.initState();
-    // Rastreia clique ao abrir o anúncio
-    if (widget.ad.id.isNotEmpty) {
-      _firestoreService.incrementAdClick(widget.ad.id);
-    }
-  }
-
-  void _openFullScreenGallery(BuildContext context, int initialIndex) {
+  void _openGallery([int initialIndex = 0]) {
+    if (_galleryImages.isEmpty) return;
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => _FullScreenGallery(
-          images: widget.ad.images,
+        builder: (_) => ImageGalleryViewerScreen(
+          images: _galleryImages,
           initialIndex: initialIndex,
         ),
       ),
@@ -194,699 +476,607 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? AppTheme.black : AppTheme.lightBg;
-    final cardBg = isDark ? AppTheme.blackCard : Colors.white;
-    final border = isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade500;
-    final imgBg = isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5);
-    final isVehicle = widget.ad.category == 'Veículos';
+    final bg = isDark ? AppTheme.black : Colors.white;
+    final sectionBg = isDark ? AppTheme.blackCard : Colors.white;
+    final border = isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB);
+    final titleColor = isDark ? Colors.white : Colors.black87;
+    final subColor = isDark ? AppTheme.whiteSecondary : Colors.grey.shade600;
+    final sellerName = widget.ad.displaySellerName.trim().isNotEmpty
+        ? widget.ad.displaySellerName.trim()
+        : 'Vendedor';
+    final sellerAvatarUrl = widget.ad.displaySellerAvatar.trim();
+    final validImages = _galleryImages;
+    final isFollowing =
+        context.watch<UserProvider>().isFollowingSeller(widget.ad.sellerId);
+    final isMe = context.watch<UserProvider>().user?.uid == widget.ad.sellerId;
+    final canNegotiate =
+        !widget.ad.isWantedAd && !isMe && widget.ad.sellerId.isNotEmpty;
 
     return Scaffold(
       backgroundColor: bg,
-      body: CustomScrollView(
-        slivers: [
-          // ── AppBar com imagem ──────────────────────────────────
-          SliverAppBar(
-            expandedHeight: 320,
-            pinned: true,
-            backgroundColor: isDark ? AppTheme.black : Colors.white,
-            leading: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                margin: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.4),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.arrow_back_rounded,
-                    color: Colors.white, size: 22),
+      appBar: AppBar(
+        backgroundColor: bg,
+        elevation: 0,
+        leading: IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: Icon(Icons.arrow_back_rounded, color: titleColor),
+        ),
+        actions: [
+          FavoriteButton(
+            adId: widget.ad.id,
+            size: 34,
+            showBackground: false,
+          ),
+        ],
+      ),
+      body: EdgeSwipeBack(
+        child: ListView(
+          children: [
+            SizedBox(
+              height: 340,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (validImages.isNotEmpty)
+                    PageView.builder(
+                      controller: _pageController,
+                      itemCount: validImages.length,
+                      onPageChanged: (value) =>
+                          setState(() => _currentImage = value),
+                      itemBuilder: (_, index) => GestureDetector(
+                        onTap: () => _openGallery(index),
+                        child: Image.network(
+                          validImages[index],
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: Colors.grey.shade200,
+                            alignment: Alignment.center,
+                            child: Icon(
+                              Icons.image_not_supported_outlined,
+                              color: Colors.grey.shade500,
+                              size: 44,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    Container(color: Colors.grey.shade200),
+                  if (validImages.length > 1)
+                    Positioned(
+                      bottom: 12,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '${_currentImage + 1}/${validImages.length}',
+                            style: GoogleFonts.roboto(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
-            actions: [
-              Container(
-                margin: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.4),
-                  shape: BoxShape.circle,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: FavoriteButton(
-                    adId: widget.ad.id,
-                    size: 36,
-                    showBackground: false,
+            Container(
+              color: sectionBg,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.ad.title,
+                    style: GoogleFonts.roboto(
+                      color: titleColor,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
+                  const SizedBox(height: 8),
+                  if (widget.ad.isWantedAd)
+                    Text(
+                      'Ele(a) espera pagar:',
+                      style: GoogleFonts.roboto(
+                        color: subColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  if (widget.ad.isWantedAd) const SizedBox(height: 2),
+                  Text(
+                    widget.ad.displayPriceLabel,
+                    style: GoogleFonts.roboto(
+                      color: titleColor,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.ad.location,
+                    style: GoogleFonts.roboto(color: subColor),
+                  ),
+                ],
+              ),
+            ),
+            _section(
+              title: 'Descrição',
+              child: Text(
+                widget.ad.description,
+                style: GoogleFonts.roboto(
+                  color: subColor,
+                  fontSize: 15,
+                  height: 1.5,
                 ),
               ),
-              GestureDetector(
-                onTap: () {},
-                child: Container(
-                  margin: const EdgeInsets.only(right: 10, top: 10, bottom: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Icon(Icons.share_rounded,
-                        color: Colors.white, size: 22),
-                  ),
-                ),
-              ),
-            ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: widget.ad.images.isNotEmpty
-                  ? Stack(
-                      children: [
-                        PageView.builder(
-                          itemCount: widget.ad.images.length,
-                          onPageChanged: (i) => setState(() => _currentImgIndex = i),
-                          itemBuilder: (context, index) {
-                            return GestureDetector(
-                              onTap: () => _openFullScreenGallery(context, index),
-                              child: Hero(
-                                tag: 'ad_img_${widget.ad.id}_$index',
-                                child: Image.network(
-                                  widget.ad.images[index],
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    color: imgBg,
-                                    child: const Icon(Icons.broken_image_outlined, size: 50),
+            ),
+            _section(
+              title: widget.ad.isWantedAd ? 'Solicitante' : 'Vendedor',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _SellerAvatar(
+                        imageUrl: sellerAvatarUrl,
+                        label: sellerName,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            if (widget.ad.isStoreAd) {
+                              if (isMe) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => MyStoreScreen(
+                                        storeId: widget.ad.storeId),
                                   ),
+                                );
+                              } else {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => SellerProfileScreen(
+                                      sellerId: widget.ad.sellerId,
+                                      sellerName: widget.ad.displaySellerName,
+                                      storeId: widget.ad.storeId,
+                                    ),
+                                  ),
+                                );
+                              }
+                              return;
+                            }
+
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => SellerProfileScreen(
+                                  sellerId: widget.ad.sellerId,
+                                  sellerName: widget.ad.displaySellerName,
                                 ),
                               ),
                             );
                           },
-                        ),
-                        if (widget.ad.images.length > 1)
-                          Positioned(
-                            bottom: 16,
-                            right: 16,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.6),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '${_currentImgIndex + 1}/${widget.ad.images.length}',
-                                style: GoogleFonts.outfit(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ),
-                      ],
-                    )
-                  : Container(
-                      color: imgBg,
-                      child: Center(
-                        child: Icon(
-                          _getCategoryIcon(widget.ad.category),
-                          color: isDark ? Colors.white12 : Colors.grey.shade300,
-                          size: 100,
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-
-          // ── Conteúdo ──────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Card principal
-                Container(
-                  width: double.infinity,
-                  color: cardBg,
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Tag tipo
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _getTypeColor(widget.ad.type),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          _getTypeLabel(widget.ad.type),
-                          style: GoogleFonts.outfit(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ).animate().fadeIn(duration: 400.ms),
-
-                      const SizedBox(height: 12),
-
-                      // Título
-                      Row(
-                        children: [
-                          if (widget.ad.storeId != null)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: Icon(Icons.store_rounded, color: AppTheme.facebookBlue, size: 24),
-                            ),
-                          Expanded(
-                            child: Text(
-                              widget.ad.title,
-                              style: GoogleFonts.outfit(
-                                color: textColor,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w800,
-                                height: 1.2,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ).animate().fadeIn(delay: 80.ms),
-
-                      const SizedBox(height: 10),
-
-                      // Preço
-                      Builder(
-                        builder: (context) {
-                          if (widget.ad.oldPrice != null) {
-                            return Row(
-                              children: [
-                                Text(
-                                  _formatPrice(widget.ad.oldPrice!),
-                                  style: GoogleFonts.outfit(
-                                    color: Colors.grey,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600,
-                                    decoration: TextDecoration.lineThrough,
-                                  ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                sellerName,
+                                style: GoogleFonts.roboto(
+                                  color: titleColor,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
                                 ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  _formatPrice(widget.ad.price),
-                                  style: GoogleFonts.outfit(
-                                    color: isDark ? Colors.white : const Color(0xFF4A4A4A),
-                                    fontSize: 30,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ],
-                            ).animate().fadeIn(delay: 120.ms);
-                          }
-                          return Text(
-                            _formatPrice(widget.ad.price),
-                            style: GoogleFonts.outfit(
-                              color: isDark ? Colors.white : const Color(0xFF4A4A4A),
-                              fontSize: 30,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ).animate().fadeIn(delay: 120.ms);
-                        },
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      // Infos rápidas
-                      SizedBox(
-                        width: double.infinity,
-                        child: Wrap(
-                          spacing: 10,
-                          runSpacing: 8,
-                          children: [
-                            _infoChip(
-                              icon: Icons.location_on_outlined,
-                              label: widget.ad.location,
-                              isDark: isDark,
-                              border: border,
-                            ),
-                            _infoChip(
-                              icon: Icons.access_time_rounded,
-                              label: _formatDate(widget.ad.createdAt),
-                              isDark: isDark,
-                              border: border,
-                            ),
-                            _infoChip(
-                              icon: Icons.category_outlined,
-                              label: widget.ad.category,
-                              isDark: isDark,
-                              border: border,
-                            ),
-                            if (isVehicle && widget.ad.km != null)
-                              _infoChip(
-                                icon: Icons.speed_rounded,
-                                label: _formatKm(widget.ad.km!),
-                                isDark: isDark,
-                                border: border,
-                                highlight: true,
                               ),
-                          ],
-                        ),
-                      ).animate().fadeIn(delay: 160.ms),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-
-                // Descrição
-                Container(
-                  width: double.infinity,
-                  color: cardBg,
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Descrição',
-                        style: GoogleFonts.outfit(
-                          color: textColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: Text(
-                          widget.ad.description,
-                          style: GoogleFonts.outfit(
-                            color: mutedColor,
-                            fontSize: 15,
-                            height: 1.6,
+                              Text(
+                                widget.ad.isStoreAd
+                                    ? 'Perfil da loja'
+                                    : (widget.ad.isWantedAd
+                                        ? 'Perfil de quem precisa disso'
+                                        : 'Perfil do vendedor'),
+                                style: GoogleFonts.roboto(color: subColor),
+                              ),
+                            ],
                           ),
                         ),
+                      ),
+                      FilledButton(
+                        onPressed: widget.ad.sellerId.isEmpty
+                            ? null
+                            : () {
+                                if (context.read<UserProvider>().user == null) {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                                  );
+                                  return;
+                                }
+                                context.read<UserProvider>().toggleFollowSeller(widget.ad.sellerId);
+                              },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: isFollowing
+                              ? Colors.grey.shade400
+                              : AppTheme.facebookBlue,
+                        ),
+                        child: Text(isFollowing ? 'Seguindo' : 'Seguir'),
                       ),
                     ],
                   ),
-                ).animate().fadeIn(delay: 200.ms),
-
-                const SizedBox(height: 8),
-
-                // Vendedor
-                Consumer<UserProvider>(
-                  builder: (context, userProvider, _) {
-                    // Usando sellerId para comparação mais segura
-                    final isMe = userProvider.user?.uid == widget.ad.sellerId;
-                    
-                    return GestureDetector(
-                      onTap: () {
-                        if (isMe) {
-                          if (userProvider.user?.hasStore == true) {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => const MyStoreScreen()));
-                          }
-                        } else {
-                          Navigator.push(
-                            context, 
+                  if (widget.ad.isStoreAd &&
+                      widget.ad.sellerUserName != null &&
+                      widget.ad.sellerUserName!.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Wrap(
+                      children: [
+                        Text(
+                          'Anúncio feito pelo vendedor ',
+                          style: GoogleFonts.roboto(color: subColor),
+                        ),
+                        GestureDetector(
+                          onTap: () => Navigator.push(
+                            context,
                             MaterialPageRoute(
                               builder: (_) => SellerProfileScreen(
                                 sellerId: widget.ad.sellerId,
-                                sellerName: widget.ad.sellerName,
-                              )
-                            )
-                          );
-                        }
-                      },
-                      child: Container(
-                        color: cardBg,
-                        padding: const EdgeInsets.all(20),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 52,
-                              height: 52,
-                              decoration: BoxDecoration(
-                                color: AppTheme.facebookBlue.withOpacity(0.12),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: AppTheme.facebookBlue.withOpacity(0.3),
-                                  width: 2,
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  widget.ad.sellerName[0].toUpperCase(),
-                                  style: GoogleFonts.outfit(
-                                    color: AppTheme.facebookBlue,
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
+                                sellerName: widget.ad.displaySellerUserName,
                               ),
                             ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    isMe ? 'Você' : widget.ad.sellerName,
-                                    style: GoogleFonts.outfit(
-                                      color: textColor,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  Text(
-                                    isMe ? 'Ver sua loja' : 'Ver perfil completo',
-                                    style: GoogleFonts.outfit(
-                                      color: AppTheme.facebookBlue,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                          ),
+                          child: Text(
+                            widget.ad.displaySellerUserName,
+                            style: GoogleFonts.roboto(
+                              color: AppTheme.facebookBlue,
+                              fontWeight: FontWeight.w700,
                             ),
-                            Icon(Icons.chevron_right_rounded,
-                                color: mutedColor, size: 24),
-                          ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            _section(
+              title: 'Detalhes',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _detailRow('Categoria', widget.ad.displayCategoryLabel,
+                      titleColor, subColor),
+                  if (widget.ad.displayCategoryTypeLabel.isNotEmpty)
+                    _detailRow(
+                      'Subtipo',
+                      widget.ad.displayCategoryTypeLabel,
+                      titleColor,
+                      subColor,
+                    ),
+                  _detailRow(
+                    'Tipo',
+                    widget.ad.displayTypeLabel,
+                    titleColor,
+                    subColor,
+                  ),
+                  if (widget.ad.isServiceAd)
+                    _detailRow(
+                      'Cobrança',
+                      widget.ad.displayServicePriceTypeLabel,
+                      titleColor,
+                      subColor,
+                    ),
+                  if (widget.ad.isPropertyProduct)
+                    _detailRow(
+                      'Negocio',
+                      widget.ad.displayPropertyOfferLabel,
+                      titleColor,
+                      subColor,
+                    ),
+                  _detailRow(
+                    'Secao',
+                    widget.ad.isWantedAd ? 'Compro' : 'Vendo',
+                    titleColor,
+                    subColor,
+                  ),
+                  if (widget.ad.storeName != null &&
+                      widget.ad.storeName!.isNotEmpty)
+                    _detailRow(
+                        'Loja', widget.ad.storeName!, titleColor, subColor),
+                ],
+              ),
+            ),
+            if (widget.ad.hasVehicleDetails)
+              _section(
+                title: 'Ficha do veículo',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: widget.ad.vehicleDetailEntries
+                      .map(
+                        (entry) => _detailRow(
+                          entry.key,
+                          entry.value,
+                          titleColor,
+                          subColor,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            if (widget.ad.hasPropertyDetails)
+              _section(
+                title: 'Ficha do imovel',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: widget.ad.propertyDetailEntries
+                      .where((entry) => entry.key != 'Subtipo')
+                      .map(
+                        (entry) => _detailRow(
+                          entry.key,
+                          entry.value,
+                          titleColor,
+                          subColor,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            _section(
+              title: 'Da mesma categoria',
+              child: FutureBuilder<List<AdModel>>(
+                future: _firestore.getAdsByCategory(
+                  widget.ad.category,
+                  excludeAdId: widget.ad.id,
+                  intent: widget.ad.intent,
+                  limit: 6,
+                ),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          color: AppTheme.facebookBlue,
                         ),
                       ),
                     );
                   }
-                ).animate().fadeIn(delay: 240.ms),
 
-                // Espaço para os botões fixos não cobrirem
-                const SizedBox(height: 100),
-              ],
-            ),
-          ),
-        ],
-      ),
+                  final relatedAds = snapshot.data ?? const <AdModel>[];
+                  if (relatedAds.isEmpty) {
+                    return Text(
+                      widget.ad.isWantedAd
+                          ? 'Nenhum outro pedido desta categoria por enquanto.'
+                          : 'Nenhum outro anúncio desta categoria por enquanto.',
+                      style: GoogleFonts.roboto(color: subColor),
+                    );
+                  }
 
-      // ── Botões fixos no fundo ──────────────────────────────────
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        decoration: BoxDecoration(
-          color: cardBg,
-          border: Border(top: BorderSide(color: border)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            // Botão chat
-            Expanded(
-              child: Consumer<UserProvider>(
-                builder: (context, userProvider, _) {
-                  final user = userProvider.user;
-                  final isMe = user?.uid == widget.ad.sellerId;
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final crossAxisCount =
+                          constraints.maxWidth >= 720 ? 3 : 2;
+                      final mainAxisExtent =
+                          constraints.maxWidth >= 720 ? 300.0 : 282.0;
 
-                  // Desabilita o botão se for o próprio anúncio
-                  // ou se o sellerId estiver vazio (anúncio sem vendedor válido)
-                  final canChat = !isMe && widget.ad.sellerId.isNotEmpty;
-
-                  return GestureDetector(
-                    onTap: canChat ? () async {
-                      if (user == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Faça login para enviar mensagens!'),
-                          ),
-                        );
-                        return;
-                      }
-
-                      // Mostra loading no botão durante a criação do chat
-                      try {
-                        final firestore = FirestoreService();
-                        final chatId = await firestore.getOrCreateChat(
-                          user.uid,
-                          widget.ad.sellerId,
-                          widget.ad.id,
-                          adTitle: widget.ad.title,
-                        );
-
-                        if (mounted) {
-                          Navigator.push(
+                      return GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: relatedAds.length,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          mainAxisExtent: mainAxisExtent,
+                        ),
+                        itemBuilder: (context, index) => AdCard(
+                          ad: relatedAds[index],
+                          index: index,
+                          onTap: () => Navigator.pushReplacement(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => ChatDetailScreen(
-                                chatId: chatId,
-                                otherUserName: widget.ad.sellerName,
-                                adTitle: widget.ad.title,
-                              ),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                e.toString().replaceFirst('Exception: ', ''),
-                              ),
-                              backgroundColor: AppTheme.error,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          );
-                        }
-                      }
-                    } : null,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      decoration: BoxDecoration(
-                        color: canChat ? AppTheme.facebookBlue : Colors.grey,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.chat_bubble_outline_rounded,
-                              color: Colors.white, size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Chat',
-                            style: GoogleFonts.outfit(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
+                              builder: (_) =>
+                                  AdDetailScreen(ad: relatedAds[index]),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    },
                   );
-                }
+                },
               ),
             ),
-
-            const SizedBox(width: 10),
-
-            // Botão ligar
-            GestureDetector(
-              onTap: () => _showContactOptions(context, widget.ad.sellerId),
-              child: Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: border),
-                ),
-                child: Icon(
-                  Icons.phone_rounded,
-                  color: AppTheme.facebookBlue,
-                  size: 24,
-                ),
-              ),
-            ).animate().fadeIn(delay: 350.ms),
           ],
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          decoration: BoxDecoration(
+            color: sectionBg,
+            border: Border(top: BorderSide(color: border)),
+          ),
+          child: Row(
+            children: [
+              if (isMe) ...[
+                Expanded(
+                  flex: 3,
+                  child: FilledButton.icon(
+                    onPressed: _markAsSold,
+                    icon: const Icon(Icons.check_circle_rounded),
+                    label: const Text('Marcar como vendido'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.facebookBlue,
+                      minimumSize: const Size.fromHeight(48),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: OutlinedButton.icon(
+                    onPressed: _openEditAd,
+                    icon: const Icon(Icons.edit_rounded),
+                    label: const Text('Editar'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _openChat,
+                    icon: const Icon(Icons.chat_bubble_rounded),
+                    label: const Text('Mensagem'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.facebookBlue,
+                      minimumSize: const Size.fromHeight(48),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+                if (!widget.ad.isWantedAd) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: canNegotiate ? _openOfferFlow : null,
+                      icon: const Icon(Icons.local_offer_rounded),
+                      label: const Text('Fazer oferta'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _infoChip({
-    required IconData icon,
-    required String label,
-    required bool isDark,
-    required Color border,
-    bool highlight = false,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: highlight
-            ? AppTheme.facebookBlue.withOpacity(0.1)
-            : (isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5)),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: highlight
-              ? AppTheme.facebookBlue.withOpacity(0.3)
-              : border,
-        ),
-      ),
+  Widget _detailRow(
+    String label,
+    String value,
+    Color titleColor,
+    Color subColor,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            icon,
-            size: 14,
-            color: highlight
-                ? AppTheme.facebookBlue
-                : (isDark ? AppTheme.whiteSecondary : Colors.grey.shade600),
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: GoogleFonts.roboto(color: subColor),
+            ),
           ),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: GoogleFonts.outfit(
-              color: highlight
-                  ? AppTheme.facebookBlue
-                  : (isDark ? AppTheme.whiteSecondary : Colors.grey.shade700),
-              fontSize: 12,
-              fontWeight: highlight ? FontWeight.w700 : FontWeight.w500,
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.roboto(
+                color: titleColor,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
       ),
     );
   }
-}
-class _FullScreenGallery extends StatefulWidget {
-  final List<String> images;
-  final int initialIndex;
 
-  const _FullScreenGallery({required this.images, required this.initialIndex});
+  Widget _section({
+    required String title,
+    required Widget child,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final titleColor = isDark ? Colors.white : Colors.black87;
 
-  @override
-  State<_FullScreenGallery> createState() => _FullScreenGalleryState();
-}
-
-class _FullScreenGalleryState extends State<_FullScreenGallery> {
-  late PageController _pageController;
-  late int _currentIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentIndex = widget.initialIndex;
-    _pageController = PageController(initialPage: widget.initialIndex);
+    return Container(
+      color: isDark ? AppTheme.blackCard : Colors.white,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.roboto(
+              color: titleColor,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
   }
+}
 
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
+class _SellerAvatar extends StatelessWidget {
+  const _SellerAvatar({
+    required this.imageUrl,
+    required this.label,
+  });
+
+  final String imageUrl;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Galeria
-          PageView.builder(
-            controller: _pageController,
-            itemCount: widget.images.length,
-            onPageChanged: (i) => setState(() => _currentIndex = i),
-            itemBuilder: (context, index) {
-              return InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 4.0,
-                child: Center(
-                  child: Hero(
-                    tag: 'ad_img_${index == widget.initialIndex ? "main" : "gallery"}_$index',
-                    child: Image.network(
-                      widget.images[index],
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return const Center(child: CircularProgressIndicator(color: Colors.white));
-                      },
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
+    final fallback = label.isNotEmpty ? label[0].toUpperCase() : '?';
 
-          // Botão Fechar
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 10,
-            left: 16,
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
-              ),
-            ),
-          ),
-
-          // Indicador de página
-          Positioned(
-            bottom: MediaQuery.of(context).padding.bottom + 20,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${_currentIndex + 1} / ${widget.images.length}',
-                  style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
-          ),
-
-          // Setas de navegação (apenas se houver mais de uma imagem)
-          if (widget.images.length > 1) ...[
-            if (_currentIndex > 0)
-              Positioned(
-                left: 10,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: Colors.black.withOpacity(0.3), shape: BoxShape.circle),
-                      child: const Icon(Icons.chevron_left_rounded, color: Colors.white, size: 36),
-                    ),
-                  ),
-                ),
-              ),
-            if (_currentIndex < widget.images.length - 1)
-              Positioned(
-                right: 10,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () => _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: Colors.black.withOpacity(0.3), shape: BoxShape.circle),
-                      child: const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 36),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ],
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: const BoxDecoration(
+        color: Color(0xFFE4E6EB),
+        shape: BoxShape.circle,
       ),
+      clipBehavior: Clip.antiAlias,
+      child: imageUrl.isNotEmpty
+          ? Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Center(
+                child: Text(
+                  fallback,
+                  style: GoogleFonts.roboto(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            )
+          : Center(
+              child: Text(
+                fallback,
+                style: GoogleFonts.roboto(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
     );
   }
 }

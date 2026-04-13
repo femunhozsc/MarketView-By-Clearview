@@ -9,11 +9,17 @@ class UserModel {
   final String phone;
   final String? profilePhoto;
   final AddressModel address;
-  final int searchRadius; // km
+  final int searchRadius;
   final bool hasStore;
   final String? storeId;
+  final List<String> storeIds;
   final List<String> favoriteAdIds;
-  final Map<String, int> categoryClicks; // Rastreamento de interesses
+  final List<String> favoriteStoreIds;
+  final List<String> followingSellerIds;
+  final List<String> recentlyViewedAdIds;
+  final List<String> pinnedChatIds;
+  final Map<String, int> categoryClicks;
+  final bool emailVerificationRequired;
   final DateTime createdAt;
 
   UserModel({
@@ -28,12 +34,24 @@ class UserModel {
     this.searchRadius = 50,
     this.hasStore = false,
     this.storeId,
+    this.storeIds = const [],
     this.favoriteAdIds = const [],
+    this.favoriteStoreIds = const [],
+    this.followingSellerIds = const [],
+    this.recentlyViewedAdIds = const [],
+    this.pinnedChatIds = const [],
     this.categoryClicks = const {},
+    this.emailVerificationRequired = false,
     required this.createdAt,
   });
 
-  String get fullName => '$firstName $lastName';
+  String get fullName => '$firstName $lastName'.trim();
+
+  String? get primaryStoreId {
+    if (storeId != null && storeId!.isNotEmpty) return storeId;
+    if (storeIds.isNotEmpty) return storeIds.first;
+    return null;
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -48,13 +66,27 @@ class UserModel {
       'searchRadius': searchRadius,
       'hasStore': hasStore,
       'storeId': storeId,
+      'storeIds': storeIds,
       'favoriteAdIds': favoriteAdIds,
+      'favoriteStoreIds': favoriteStoreIds,
+      'followingSellerIds': followingSellerIds,
+      'recentlyViewedAdIds': recentlyViewedAdIds,
+      'pinnedChatIds': pinnedChatIds,
       'categoryClicks': categoryClicks,
+      'emailVerificationRequired': emailVerificationRequired,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
 
   factory UserModel.fromMap(Map<String, dynamic> map) {
+    final storeIds = List<String>.from(map['storeIds'] ?? []);
+    final legacyStoreId = map['storeId'];
+    if (legacyStoreId is String &&
+        legacyStoreId.isNotEmpty &&
+        !storeIds.contains(legacyStoreId)) {
+      storeIds.insert(0, legacyStoreId);
+    }
+
     return UserModel(
       uid: map['uid'] ?? '',
       firstName: map['firstName'] ?? '',
@@ -65,19 +97,27 @@ class UserModel {
       profilePhoto: map['profilePhoto'],
       address: AddressModel.fromMap(map['address'] ?? {}),
       searchRadius: map['searchRadius'] ?? 50,
-      hasStore: map['hasStore'] ?? false,
-      storeId: map['storeId'],
+      hasStore: (map['hasStore'] ?? false) || storeIds.isNotEmpty,
+      storeId: (legacyStoreId is String && legacyStoreId.isNotEmpty)
+          ? legacyStoreId
+          : (storeIds.isNotEmpty ? storeIds.first : null),
+      storeIds: storeIds,
       favoriteAdIds: List<String>.from(map['favoriteAdIds'] ?? []),
+      favoriteStoreIds: List<String>.from(map['favoriteStoreIds'] ?? []),
+      followingSellerIds: List<String>.from(map['followingSellerIds'] ?? []),
+      recentlyViewedAdIds: List<String>.from(map['recentlyViewedAdIds'] ?? []),
+      pinnedChatIds: List<String>.from(map['pinnedChatIds'] ?? []),
       categoryClicks: Map<String, int>.from(
         (map['categoryClicks'] as Map<String, dynamic>?)?.map(
-          (k, v) => MapEntry(k, (v as num).toInt()),
-        ) ?? {},
+              (k, v) => MapEntry(k, (v as num).toInt()),
+            ) ??
+            {},
       ),
+      emailVerificationRequired: map['emailVerificationRequired'] ?? false,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
-  /// Retorna categorias ordenadas por número de cliques (mais interessado primeiro)
   List<String> get topCategories {
     if (categoryClicks.isEmpty) return [];
     final sorted = categoryClicks.entries.toList()
@@ -96,8 +136,14 @@ class UserModel {
     int? searchRadius,
     bool? hasStore,
     String? storeId,
+    List<String>? storeIds,
     List<String>? favoriteAdIds,
+    List<String>? favoriteStoreIds,
+    List<String>? followingSellerIds,
+    List<String>? recentlyViewedAdIds,
+    List<String>? pinnedChatIds,
     Map<String, int>? categoryClicks,
+    bool? emailVerificationRequired,
   }) {
     return UserModel(
       uid: uid,
@@ -111,8 +157,15 @@ class UserModel {
       searchRadius: searchRadius ?? this.searchRadius,
       hasStore: hasStore ?? this.hasStore,
       storeId: storeId ?? this.storeId,
+      storeIds: storeIds ?? this.storeIds,
       favoriteAdIds: favoriteAdIds ?? this.favoriteAdIds,
+      favoriteStoreIds: favoriteStoreIds ?? this.favoriteStoreIds,
+      followingSellerIds: followingSellerIds ?? this.followingSellerIds,
+      recentlyViewedAdIds: recentlyViewedAdIds ?? this.recentlyViewedAdIds,
+      pinnedChatIds: pinnedChatIds ?? this.pinnedChatIds,
       categoryClicks: categoryClicks ?? this.categoryClicks,
+      emailVerificationRequired:
+          emailVerificationRequired ?? this.emailVerificationRequired,
       createdAt: createdAt,
     );
   }
