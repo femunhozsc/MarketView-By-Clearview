@@ -15,6 +15,7 @@ class ChatDetailScreen extends StatefulWidget {
   final String chatId;
   final String? otherUserId;
   final String otherUserName;
+  final String? otherUserPhoto;
   final String adTitle;
   final String? adId;
   final String? sellerId;
@@ -27,6 +28,7 @@ class ChatDetailScreen extends StatefulWidget {
     required this.chatId,
     this.otherUserId,
     required this.otherUserName,
+    this.otherUserPhoto,
     required this.adTitle,
     this.adId,
     this.sellerId,
@@ -51,6 +53,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final _firestore = FirestoreService();
   bool _showQuickReplies = true;
   bool _handledInitialOffer = false;
+  bool _isMarkingRead = false;
   final bool _showDealBar = true;
 
   bool get _isDirectChat {
@@ -97,6 +100,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           sellerId: otherUserId,
           sellerName: widget.otherUserName,
         ),
+      ),
+    );
+  }
+
+  bool get _isCompactMobile {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    if (mediaQuery == null) return false;
+    return mediaQuery.size.width < 390;
+  }
+
+  void _openLinkedAd(AdModel ad) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AdDetailScreen(ad: ad),
       ),
     );
   }
@@ -150,7 +168,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
     _messageCtrl.clear();
     try {
-      await _firestore.sendMessage(widget.chatId, user.uid, text);
+      await _firestore.sendMessage(
+        widget.chatId,
+        user.uid,
+        text,
+        senderName: user.fullName,
+        senderPhoto: user.profilePhoto ?? '',
+      );
       if (mounted) setState(() => _showQuickReplies = false);
     } catch (e) {
       if (!mounted) return;
@@ -164,6 +188,38 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   Future<void> _sendQuickReply(String text) async {
     await _sendMessage(text);
+  }
+
+  Future<void> _markVisibleMessagesAsRead(
+    List<QueryDocumentSnapshot> docs,
+    String currentUserId,
+  ) async {
+    if (_isMarkingRead || docs.isEmpty) return;
+
+    var hasUnread = false;
+    for (final doc in docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final senderId = (data['senderId'] as String? ?? '').trim();
+      if (senderId.isEmpty || senderId == currentUserId) continue;
+      final readBy = (data['readBy'] as List<dynamic>? ?? const [])
+          .whereType<String>()
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+      if (!readBy.contains(currentUserId)) {
+        hasUnread = true;
+        break;
+      }
+    }
+
+    if (!hasUnread) return;
+
+    _isMarkingRead = true;
+    try {
+      await _firestore.markMessagesAsRead(widget.chatId, currentUserId);
+    } finally {
+      _isMarkingRead = false;
+    }
   }
 
   bool get _canSendOffer {
@@ -394,6 +450,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       sellerId: widget.sellerId!,
       buyerFirstName:
           user.firstName.isNotEmpty ? user.firstName : user.fullName,
+      buyerPhoto: user.profilePhoto ?? '',
       adId: widget.adId!,
       adTitle: widget.adTitle,
       adPrice: widget.adPrice!,
@@ -650,9 +707,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   Widget _buildQuickReplies(bool isDark) {
     if (_isDirectChat || !_showQuickReplies) return const SizedBox.shrink();
     final quickReplies = _roleQuickReplies;
+    final chipFontSize = _isCompactMobile ? 12.5 : 13.5;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: EdgeInsets.fromLTRB(16, 0, 16, _isCompactMobile ? 8 : 10),
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -669,6 +727,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               style: GoogleFonts.roboto(
                 color: isDark ? Colors.white : AppTheme.facebookBlue,
                 fontWeight: FontWeight.w600,
+                fontSize: chipFontSize,
               ),
             ),
           );
@@ -677,14 +736,27 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
-  Widget _buildMessageBubble(String text, bool isMe, bool isDark) {
+  Widget _buildMessageBubble(
+    String text,
+    bool isMe,
+    bool isDark, {
+    bool isRead = false,
+  }) {
+    final maxBubbleWidth = _isCompactMobile ? 0.82 : 0.75;
+    final messageFontSize = _isCompactMobile ? 16.0 : 15.0;
+    final horizontalPadding = _isCompactMobile ? 17.0 : 16.0;
+    final verticalPadding = _isCompactMobile ? 11.0 : 10.0;
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: horizontalPadding,
+          vertical: verticalPadding,
+        ),
         constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * maxBubbleWidth),
         decoration: BoxDecoration(
           color: isMe
               ? AppTheme.facebookBlue
@@ -696,14 +768,113 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 isMe ? const Radius.circular(18) : const Radius.circular(0),
           ),
         ),
-        child: Text(
-          text,
-          style: GoogleFonts.roboto(
-            color:
-                isMe ? Colors.white : (isDark ? Colors.white : Colors.black87),
-            fontSize: 15,
-          ),
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              text,
+              style: GoogleFonts.roboto(
+                color: isMe
+                    ? Colors.white
+                    : (isDark ? Colors.white : Colors.black87),
+                fontSize: messageFontSize,
+                height: 1.28,
+              ),
+            ),
+            if (isMe) ...[
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                    size: 15,
+                    color: isRead
+                        ? const Color(0xFFD6ECFF)
+                        : Colors.white.withValues(alpha: 0.86),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    isRead ? 'Lido' : 'Enviado',
+                    style: GoogleFonts.roboto(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderAvatar(String imageUrl, String initials) {
+    return CircleAvatar(
+      radius: 20,
+      backgroundColor: AppTheme.facebookBlue.withValues(alpha: 0.12),
+      backgroundImage: imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+      child: imageUrl.isEmpty
+          ? Text(
+              initials,
+              style: GoogleFonts.roboto(
+                color: AppTheme.facebookBlue,
+                fontWeight: FontWeight.w800,
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildHeaderTitle({
+    required Color textColor,
+    required bool showAdTitle,
+    required String profilePhoto,
+  }) {
+    final initials = widget.otherUserName.trim().isNotEmpty
+        ? widget.otherUserName.trim()[0].toUpperCase()
+        : 'U';
+
+    return InkWell(
+      onTap: _openOtherProfile,
+      borderRadius: BorderRadius.circular(16),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: _openOtherProfile,
+            child: _buildHeaderAvatar(profilePhoto, initials),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.otherUserName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.roboto(
+                    color: textColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (showAdTitle)
+                  Text(
+                    widget.adTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.roboto(color: Colors.grey, fontSize: 12),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -891,6 +1062,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   Widget _buildChatHeader(bool isDark, Color textColor) {
     final otherUserId = widget.otherUserId?.trim() ?? '';
     final showAdTitle = !_isDirectChat && widget.adTitle.trim().isNotEmpty;
+    final fallbackPhoto = (widget.otherUserPhoto ?? '').trim();
 
     if (otherUserId.isEmpty) {
       return Column(
@@ -918,65 +1090,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           FirebaseFirestore.instance.collection('users').doc(otherUserId).get(),
       builder: (context, snapshot) {
         final data = snapshot.data?.data() as Map<String, dynamic>?;
-        final profilePhoto = (data?['profilePhoto'] as String? ?? '').trim();
-        final initials = widget.otherUserName.trim().isNotEmpty
-            ? widget.otherUserName.trim()[0].toUpperCase()
-            : 'U';
+        final profilePhoto =
+            (data?['profilePhoto'] as String? ?? fallbackPhoto).trim();
 
-        return InkWell(
-          onTap: _openOtherProfile,
-          borderRadius: BorderRadius.circular(16),
-          child: Row(
-            children: [
-              GestureDetector(
-                onTap: _openOtherProfile,
-                child: CircleAvatar(
-                  radius: 20,
-                  backgroundColor:
-                      AppTheme.facebookBlue.withValues(alpha: 0.12),
-                  backgroundImage: profilePhoto.isNotEmpty
-                      ? NetworkImage(profilePhoto)
-                      : null,
-                  child: profilePhoto.isEmpty
-                      ? Text(
-                          initials,
-                          style: GoogleFonts.roboto(
-                            color: AppTheme.facebookBlue,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        )
-                      : null,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      widget.otherUserName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.roboto(
-                        color: textColor,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (showAdTitle)
-                      Text(
-                        widget.adTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.roboto(
-                            color: Colors.grey, fontSize: 12),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        return _buildHeaderTitle(
+          textColor: textColor,
+          showAdTitle: showAdTitle,
+          profilePhoto: profilePhoto,
         );
       },
     );
@@ -996,7 +1116,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         final imageUrl = ad.images.isNotEmpty ? ad.images.first.trim() : '';
         final subtitleColor =
             isDark ? AppTheme.whiteSecondary : Colors.grey.shade700;
-        final barHeight = _showDealBar ? 112.0 : 0.0;
+        final isCompact = _isCompactMobile;
+        final barHeight = _showDealBar ? (isCompact ? 122.0 : 112.0) : 0.0;
         if (barHeight <= 2) {
           return const SizedBox.shrink();
         }
@@ -1014,72 +1135,81 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               ),
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+              padding: EdgeInsets.fromLTRB(12, isCompact ? 8 : 6, 12, 6),
               child: Column(
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Container(
-                          width: 56,
-                          height: 56,
-                          color: isDark
-                              ? AppTheme.blackLight
-                              : const Color(0xFFF3F4F6),
-                          child: imageUrl.isNotEmpty
-                              ? Image.network(
-                                  imageUrl,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Icon(
-                                    Icons.image_rounded,
-                                    color: subtitleColor,
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.image_rounded,
-                                  color: subtitleColor,
-                                ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: SizedBox(
-                          height: 56,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                ad.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.roboto(
-                                  color: isDark ? Colors.white : Colors.black87,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${ad.displayPriceLabel} | ${ad.location}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.roboto(
-                                  color: subtitleColor,
-                                  fontSize: 12.2,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+                  InkWell(
+                    onTap: () => _openLinkedAd(ad),
+                    borderRadius: BorderRadius.circular(14),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              width: isCompact ? 60 : 56,
+                              height: isCompact ? 60 : 56,
+                              color: isDark
+                                  ? AppTheme.blackLight
+                                  : const Color(0xFFF3F4F6),
+                              child: imageUrl.isNotEmpty
+                                  ? Image.network(
+                                      imageUrl,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Icon(
+                                        Icons.image_rounded,
+                                        color: subtitleColor,
+                                      ),
+                                    )
+                                  : Icon(
+                                      Icons.image_rounded,
+                                      color: subtitleColor,
+                                    ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: SizedBox(
+                              height: isCompact ? 60 : 56,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    ad.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.roboto(
+                                      color:
+                                          isDark ? Colors.white : Colors.black87,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: isCompact ? 14.8 : 14,
+                                      height: 1.15,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${ad.displayPriceLabel} | ${ad.location}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.roboto(
+                                      color: subtitleColor,
+                                      fontSize: isCompact ? 12.8 : 12.2,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 2),
+                  SizedBox(height: isCompact ? 6 : 2),
                   SizedBox(
-                    height: 30,
+                    height: isCompact ? 34 : 30,
                     child: Row(
                       children: [
                         Expanded(
@@ -1093,14 +1223,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                               );
                             },
                             style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(30),
+                              minimumSize: Size.fromHeight(isCompact ? 34 : 30),
                               padding: EdgeInsets.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               textStyle: GoogleFonts.roboto(
-                                fontSize: 12.2,
+                                fontSize: isCompact ? 12.8 : 12.2,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -1112,14 +1242,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           child: FilledButton(
                             onPressed: _canSendOffer ? _startOfferFlow : null,
                             style: FilledButton.styleFrom(
-                              minimumSize: const Size.fromHeight(30),
+                              minimumSize: Size.fromHeight(isCompact ? 34 : 30),
                               padding: EdgeInsets.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               textStyle: GoogleFonts.roboto(
-                                fontSize: 12.2,
+                                fontSize: isCompact ? 12.8 : 12.2,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -1139,8 +1269,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Widget _buildInputArea(bool isDark) {
+    final isCompact = _isCompactMobile;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: EdgeInsets.fromLTRB(16, isCompact ? 10 : 8, 16, isCompact ? 18 : 24),
       decoration: BoxDecoration(
         color: isDark ? AppTheme.blackCard : Colors.white,
         border: Border(
@@ -1153,17 +1284,24 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             child: TextField(
               controller: _messageCtrl,
               style: GoogleFonts.roboto(
-                  color: isDark ? Colors.white : Colors.black87),
+                color: isDark ? Colors.white : Colors.black87,
+                fontSize: isCompact ? 16.2 : 15,
+              ),
               decoration: InputDecoration(
                 hintText: 'Digite uma mensagem...',
-                hintStyle: GoogleFonts.roboto(color: Colors.grey),
+                hintStyle: GoogleFonts.roboto(
+                  color: Colors.grey,
+                  fontSize: isCompact ? 15.5 : 14.5,
+                ),
                 filled: true,
                 fillColor: isDark ? AppTheme.black : Colors.grey.shade100,
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(isCompact ? 26 : 24),
                     borderSide: BorderSide.none),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: isCompact ? 13 : 10,
+                ),
               ),
               onSubmitted: (_) => _sendMessage(),
             ),
@@ -1269,6 +1407,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     );
                   }
 
+                  if (user != null) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      _markVisibleMessagesAsRead(docs, user.uid);
+                    });
+                  }
+
                   return ListView.builder(
                     reverse: true,
                     padding: const EdgeInsets.all(16),
@@ -1278,6 +1423,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       final data = doc.data() as Map<String, dynamic>;
                       final type = data['type'] as String? ?? 'text';
                       final isMe = data['senderId'] == user?.uid;
+                      final readBy = (data['readBy'] as List<dynamic>? ?? const [])
+                          .whereType<String>()
+                          .map((value) => value.trim())
+                          .where((value) => value.isNotEmpty)
+                          .toList(growable: false);
+                      final isRead = user != null &&
+                          isMe &&
+                          readBy.any((value) => value != user.uid);
 
                       if (type == 'offer' && user != null) {
                         return _buildOfferCard(data, doc.id, isDark, user.uid);
@@ -1285,7 +1438,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
                       final text = data['text'] as String? ?? '';
                       if (text.isEmpty) return const SizedBox.shrink();
-                      return _buildMessageBubble(text, isMe, isDark);
+                      return _buildMessageBubble(
+                        text,
+                        isMe,
+                        isDark,
+                        isRead: isRead,
+                      );
                     },
                   );
                 },

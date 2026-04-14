@@ -10,6 +10,8 @@ class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final CloudinaryService _cloudinary = CloudinaryService();
   final StorageService _storage = StorageService();
+  static const int _userSearchBatchSize = 120;
+  static const int _userSearchMaxPages = 5;
 
   // ── Usuários ──────────────────────────────────────────────────────────────
 
@@ -453,51 +455,70 @@ class FirestoreService {
           .split(RegExp(r'[^a-z0-9]+'))
           .where((term) => term.isNotEmpty)
           .toList(growable: false);
-      final snapshot = await _firestore
-          .collection('users')
-          .orderBy('createdAt', descending: true)
-          .limit(60)
-          .get();
+      final rankedByUserId = <String, MapEntry<UserModel, int>>{};
+      DocumentSnapshot<Map<String, dynamic>>? lastDoc;
 
-      final ranked = <MapEntry<UserModel, int>>[];
-      for (final doc in snapshot.docs) {
-        final user = UserModel.fromMap(doc.data());
-        final fullName = AdModel.normalizeValue(user.fullName);
-        final firstName = AdModel.normalizeValue(user.firstName);
-        final lastName = AdModel.normalizeValue(user.lastName);
-        final city = AdModel.normalizeValue(user.address.city);
-        final state = AdModel.normalizeValue(user.address.state);
-
-        var score = 0;
-        if (fullName == normalizedQuery) score += 220;
-        if (firstName == normalizedQuery || lastName == normalizedQuery) {
-          score += 180;
-        }
-        if (fullName.startsWith(normalizedQuery)) score += 160;
-        if (firstName.startsWith(normalizedQuery)) score += 110;
-        if (lastName.startsWith(normalizedQuery)) score += 90;
-        if (fullName.contains(normalizedQuery)) score += 100;
-        if (city.contains(normalizedQuery) || state.contains(normalizedQuery)) {
-          score += 28;
+      for (var page = 0; page < _userSearchMaxPages; page++) {
+        var firestoreQuery = _firestore
+            .collection('users')
+            .orderBy('createdAt', descending: true)
+            .limit(_userSearchBatchSize);
+        if (lastDoc != null) {
+          firestoreQuery = firestoreQuery.startAfterDocument(lastDoc);
         }
 
-        for (final term in queryTerms) {
-          if (fullName.contains(term)) score += 22;
-          if (firstName.contains(term)) score += 18;
-          if (lastName.contains(term)) score += 14;
-          if (city.contains(term) || state.contains(term)) score += 6;
+        final snapshot = await firestoreQuery.get();
+        if (snapshot.docs.isEmpty) break;
+
+        for (final doc in snapshot.docs) {
+          final user = UserModel.fromMap(doc.data());
+          final fullName = AdModel.normalizeValue(user.fullName);
+          final firstName = AdModel.normalizeValue(user.firstName);
+          final lastName = AdModel.normalizeValue(user.lastName);
+          final city = AdModel.normalizeValue(user.address.city);
+          final state = AdModel.normalizeValue(user.address.state);
+
+          var score = 0;
+          if (fullName == normalizedQuery) score += 220;
+          if (firstName == normalizedQuery || lastName == normalizedQuery) {
+            score += 180;
+          }
+          if (fullName.startsWith(normalizedQuery)) score += 160;
+          if (firstName.startsWith(normalizedQuery)) score += 110;
+          if (lastName.startsWith(normalizedQuery)) score += 90;
+          if (fullName.contains(normalizedQuery)) score += 100;
+          if (city.contains(normalizedQuery) || state.contains(normalizedQuery)) {
+            score += 28;
+          }
+
+          for (final term in queryTerms) {
+            if (fullName.contains(term)) score += 22;
+            if (firstName.contains(term)) score += 18;
+            if (lastName.contains(term)) score += 14;
+            if (city.contains(term) || state.contains(term)) score += 6;
+          }
+
+          if (score <= 0 || user.uid.trim().isEmpty) continue;
+
+          final previous = rankedByUserId[user.uid];
+          if (previous == null || score > previous.value) {
+            rankedByUserId[user.uid] = MapEntry(user, score);
+          }
         }
 
-        if (score > 0) {
-          ranked.add(MapEntry(user, score));
+        lastDoc = snapshot.docs.last;
+        if (snapshot.docs.length < _userSearchBatchSize &&
+            rankedByUserId.length >= limit) {
+          break;
         }
       }
 
-      ranked.sort((a, b) {
-        final scoreCompare = b.value.compareTo(a.value);
-        if (scoreCompare != 0) return scoreCompare;
-        return b.key.createdAt.compareTo(a.key.createdAt);
-      });
+      final ranked = rankedByUserId.values.toList()
+        ..sort((a, b) {
+          final scoreCompare = b.value.compareTo(a.value);
+          if (scoreCompare != 0) return scoreCompare;
+          return b.key.createdAt.compareTo(a.key.createdAt);
+        });
 
       return ranked.take(limit).map((entry) => entry.key).toList();
     } catch (e) {
@@ -1435,6 +1456,10 @@ class FirestoreService {
     String sellerId,
     String adId, {
     String adTitle = '',
+    String buyerName = '',
+    String buyerPhoto = '',
+    String sellerName = '',
+    String sellerPhoto = '',
   }) async {
     // Validações básicas
     if (buyerId.isEmpty) {
@@ -1451,32 +1476,24 @@ class FirestoreService {
     }
 
     try {
-      // Tenta encontrar conversa existente
-      final snapshot = await _firestore
-          .collection('chats')
-          .where('buyerId', isEqualTo: buyerId)
-          .where('sellerId', isEqualTo: sellerId)
-          .where('adId', isEqualTo: adId)
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isNotEmpty) {
-        return snapshot.docs.first.id;
-      }
-
-      // Cria nova conversa
-      final docRef = _firestore.collection('chats').doc();
+      final chatId = _buildAdChatId(
+        buyerId: buyerId,
+        sellerId: sellerId,
+        adId: adId,
+      );
+      final docRef = _firestore.collection('chats').doc(chatId);
       await docRef.set({
         'id': docRef.id,
         'buyerId': buyerId,
+        if (buyerName.trim().isNotEmpty) 'buyerName': buyerName.trim(),
+        if (buyerPhoto.trim().isNotEmpty) 'buyerPhoto': buyerPhoto.trim(),
         'sellerId': sellerId,
+        if (sellerName.trim().isNotEmpty) 'sellerName': sellerName.trim(),
+        if (sellerPhoto.trim().isNotEmpty) 'sellerPhoto': sellerPhoto.trim(),
         'participants': [buyerId, sellerId],
         'adId': adId,
-        'adTitle': adTitle, // salvo para exibir na lista de chats
-        'lastMessage': '',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'unreadCount': 0,
-      });
+        if (adTitle.trim().isNotEmpty) 'adTitle': adTitle.trim(),
+      }, SetOptions(merge: true));
       return docRef.id;
     } catch (e) {
       debugPrint('getOrCreateChat falhou: $e');
@@ -1484,10 +1501,22 @@ class FirestoreService {
     }
   }
 
+  String _buildAdChatId({
+    required String buyerId,
+    required String sellerId,
+    required String adId,
+  }) {
+    return 'ad_${adId.trim()}_${buyerId.trim()}_${sellerId.trim()}';
+  }
+
   Future<String> getOrCreateDirectChat(
     String currentUserId,
     String otherUserId, {
     required String title,
+    String currentUserName = '',
+    String currentUserPhoto = '',
+    String otherUserName = '',
+    String otherUserPhoto = '',
   }) async {
     if (currentUserId.isEmpty || otherUserId.isEmpty) {
       throw Exception('N�o � poss�vel iniciar um chat.');
@@ -1499,22 +1528,21 @@ class FirestoreService {
     final participants = [currentUserId, otherUserId]..sort();
     final directKey = 'direct_${participants.join('_')}';
     final docRef = _firestore.collection('chats').doc(directKey);
-    final doc = await docRef.get();
-    if (doc.exists) {
-      return docRef.id;
-    }
-
     await docRef.set({
       'id': docRef.id,
       'buyerId': currentUserId,
+      if (currentUserName.trim().isNotEmpty)
+        'buyerName': currentUserName.trim(),
+      if (currentUserPhoto.trim().isNotEmpty)
+        'buyerPhoto': currentUserPhoto.trim(),
       'sellerId': otherUserId,
+      if (otherUserName.trim().isNotEmpty) 'sellerName': otherUserName.trim(),
+      if (otherUserPhoto.trim().isNotEmpty)
+        'sellerPhoto': otherUserPhoto.trim(),
       'adId': directKey,
-      'adTitle': title,
+      if (title.trim().isNotEmpty) 'adTitle': title.trim(),
       'participants': participants,
-      'lastMessage': '',
-      'lastMessageTime': FieldValue.serverTimestamp(),
-      'unreadCount': 0,
-    });
+    }, SetOptions(merge: true));
     return docRef.id;
   }
 
@@ -1523,33 +1551,51 @@ class FirestoreService {
     Map<String, dynamic> payload, {
     required String preview,
   }) async {
+    final chatRef = _firestore.collection('chats').doc(chatId);
     final batch = _firestore.batch();
 
-    final msgRef =
-        _firestore.collection('chats').doc(chatId).collection('messages').doc();
+    final msgRef = chatRef.collection('messages').doc();
     batch.set(msgRef, {
       'id': msgRef.id,
       'time': FieldValue.serverTimestamp(),
       ...payload,
     });
 
-    final chatRef = _firestore.collection('chats').doc(chatId);
-    batch.update(chatRef, {
+    final chatPatch = <String, dynamic>{
+      'id': chatRef.id,
       'lastMessage': preview,
       'lastMessageTime': FieldValue.serverTimestamp(),
-    });
+      if ((payload['senderName'] as String? ?? '').trim().isNotEmpty)
+        'lastSenderName': (payload['senderName'] as String).trim(),
+      if ((payload['senderPhoto'] as String? ?? '').trim().isNotEmpty)
+        'lastSenderPhoto': (payload['senderPhoto'] as String).trim(),
+      if ((payload['buyerFirstName'] as String? ?? '').trim().isNotEmpty)
+        'lastSenderName': (payload['buyerFirstName'] as String).trim(),
+      if ((payload['buyerPhoto'] as String? ?? '').trim().isNotEmpty)
+        'lastSenderPhoto': (payload['buyerPhoto'] as String).trim(),
+    };
+    batch.set(chatRef, chatPatch, SetOptions(merge: true));
 
     await batch.commit();
   }
 
   /// Envia uma mensagem em uma conversa
-  Future<void> sendMessage(String chatId, String senderId, String text) async {
+  Future<void> sendMessage(
+    String chatId,
+    String senderId,
+    String text, {
+    String senderName = '',
+    String senderPhoto = '',
+  }) async {
     await _sendChatPayload(
       chatId,
       {
         'senderId': senderId,
+        if (senderName.trim().isNotEmpty) 'senderName': senderName.trim(),
+        if (senderPhoto.trim().isNotEmpty) 'senderPhoto': senderPhoto.trim(),
         'type': 'text',
         'text': text,
+        'readBy': [senderId],
       },
       preview: text,
     );
@@ -1561,6 +1607,7 @@ class FirestoreService {
     required String buyerId,
     required String sellerId,
     required String buyerFirstName,
+    String buyerPhoto = '',
     required String adId,
     required String adTitle,
     required double adPrice,
@@ -1576,12 +1623,14 @@ class FirestoreService {
         'buyerId': buyerId,
         'sellerId': sellerId,
         'buyerFirstName': buyerFirstName,
+        if (buyerPhoto.trim().isNotEmpty) 'buyerPhoto': buyerPhoto.trim(),
         'adId': adId,
         'adTitle': adTitle,
         'adPrice': adPrice,
         'offerPrice': offerPrice,
         'counterPrice': null,
         'agreedPrice': null,
+        'readBy': [senderId],
       },
       preview: 'Oferta enviada',
     );
@@ -1614,6 +1663,42 @@ class FirestoreService {
         .doc(chatId)
         .collection('messages')
         .snapshots();
+  }
+
+  Future<void> markMessagesAsRead(
+    String chatId,
+    String readerId,
+  ) async {
+    if (chatId.trim().isEmpty || readerId.trim().isEmpty) return;
+
+    final snapshot = await _firestore
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .where('senderId', isNotEqualTo: readerId)
+        .get();
+
+    final batch = _firestore.batch();
+    var hasUpdates = false;
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final readBy = (data['readBy'] as List<dynamic>? ?? const [])
+          .whereType<String>()
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+      if (readBy.contains(readerId)) continue;
+
+      batch.set(doc.reference, {
+        'readBy': FieldValue.arrayUnion([readerId]),
+        'readAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      hasUpdates = true;
+    }
+
+    if (hasUpdates) {
+      await batch.commit();
+    }
   }
 
   /// Stream de conversas de um usuário (ordenação local na tela)

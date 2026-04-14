@@ -78,56 +78,78 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
       widget.ad.sellerId,
       widget.ad.id,
       adTitle: widget.ad.title,
+      buyerName: user.fullName,
+      buyerPhoto: user.profilePhoto ?? '',
+      sellerName: widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
+          ? widget.ad.displaySellerUserName
+          : widget.ad.displaySellerName,
+      sellerPhoto: widget.ad.displaySellerAvatar,
     );
   }
 
   Future<void> _openChat() async {
-    final chatId = await _ensureChat();
-    if (chatId == null || !mounted) return;
+    try {
+      final chatId = await _ensureChat();
+      if (chatId == null || !mounted) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatDetailScreen(
-          chatId: chatId,
-          otherUserId: widget.ad.sellerId,
-          otherUserName:
-              widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
-                  ? widget.ad.displaySellerUserName
-                  : widget.ad.displaySellerName,
-          adTitle: widget.ad.title,
-          adId: widget.ad.id,
-          sellerId: widget.ad.sellerId,
-          adPrice: widget.ad.price,
-          adIntent: widget.ad.intent,
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatDetailScreen(
+            chatId: chatId,
+            otherUserId: widget.ad.sellerId,
+            otherUserName: widget.ad.isStoreAd &&
+                    widget.ad.displaySellerUserName.isNotEmpty
+                ? widget.ad.displaySellerUserName
+                : widget.ad.displaySellerName,
+            otherUserPhoto: widget.ad.displaySellerAvatar,
+            adTitle: widget.ad.title,
+            adId: widget.ad.id,
+            sellerId: widget.ad.sellerId,
+            adPrice: widget.ad.price,
+            adIntent: widget.ad.intent,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nao foi possivel abrir o chat: $e')),
+      );
+    }
   }
 
   Future<void> _openOfferFlow() async {
-    final chatId = await _ensureChat();
-    if (chatId == null || !mounted) return;
+    try {
+      final chatId = await _ensureChat();
+      if (chatId == null || !mounted) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatDetailScreen(
-          chatId: chatId,
-          otherUserId: widget.ad.sellerId,
-          otherUserName:
-              widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
-                  ? widget.ad.displaySellerUserName
-                  : widget.ad.displaySellerName,
-          adTitle: widget.ad.title,
-          adId: widget.ad.id,
-          sellerId: widget.ad.sellerId,
-          adPrice: widget.ad.price,
-          adIntent: widget.ad.intent,
-          openOfferComposerOnLoad: true,
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatDetailScreen(
+            chatId: chatId,
+            otherUserId: widget.ad.sellerId,
+            otherUserName: widget.ad.isStoreAd &&
+                    widget.ad.displaySellerUserName.isNotEmpty
+                ? widget.ad.displaySellerUserName
+                : widget.ad.displaySellerName,
+            otherUserPhoto: widget.ad.displaySellerAvatar,
+            adTitle: widget.ad.title,
+            adId: widget.ad.id,
+            sellerId: widget.ad.sellerId,
+            adPrice: widget.ad.price,
+            adIntent: widget.ad.intent,
+            openOfferComposerOnLoad: true,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nao foi possivel abrir a negociacao: $e')),
+      );
+    }
   }
 
   Future<void> _openEditAd() async {
@@ -958,6 +980,20 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
                   ),
                 ),
               ] else ...[
+                if (!widget.ad.isWantedAd) ...[
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: canNegotiate ? _openOfferFlow : null,
+                      icon: const Icon(Icons.local_offer_rounded),
+                      label: const Text('Fazer oferta'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: _openChat,
@@ -970,20 +1006,6 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
                     ),
                   ),
                 ),
-                if (!widget.ad.isWantedAd) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: canNegotiate ? _openOfferFlow : null,
-                      icon: const Icon(Icons.local_offer_rounded),
-                      label: const Text('Fazer oferta'),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ],
           ),

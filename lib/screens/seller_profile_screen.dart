@@ -146,6 +146,10 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
         currentUser.uid,
         widget.sellerId,
         title: '',
+        currentUserName: currentUser.fullName,
+        currentUserPhoto: currentUser.profilePhoto ?? '',
+        otherUserName: (_user?.fullName ?? widget.sellerName).trim(),
+        otherUserPhoto: _user?.profilePhoto ?? '',
       );
       if (!mounted) return;
 
@@ -158,6 +162,7 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
             otherUserId: widget.sellerId,
             otherUserName:
                 otherUserName.isNotEmpty ? otherUserName : 'Usu\u00e1rio',
+            otherUserPhoto: _user?.profilePhoto ?? '',
             adTitle: '',
           ),
         ),

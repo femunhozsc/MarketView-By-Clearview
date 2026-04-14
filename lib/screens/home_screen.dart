@@ -2557,11 +2557,8 @@ class _HomeScreenState extends State<HomeScreen>
                     borderRadius: BorderRadius.circular(16),
                     onTap: () {
                       _toggleDrawer();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const ProfileScreen(),
-                        ),
+                      _handleAuthRequired(
+                        () => setState(() => _selectedNavIndex = 4),
                       );
                     },
                     child: Padding(
@@ -2730,10 +2727,8 @@ class _HomeScreenState extends State<HomeScreen>
               Divider(color: border, height: 1),
               _drawerItem(Icons.person_outline_rounded, 'Meu Perfil', textColor,
                   subColor,
-                  onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const ProfileScreen()),
+                  onTap: () => _handleAuthRequired(
+                        () => setState(() => _selectedNavIndex = 4),
                       )),
               _drawerItem(
                   Icons.store_outlined, 'Minhas Lojas', textColor, subColor,

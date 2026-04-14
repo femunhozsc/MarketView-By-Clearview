@@ -222,10 +222,7 @@ class _ChatScreenState extends State<ChatScreen> {
           };
 
           return StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('chats')
-                .where('participants', arrayContains: user.uid)
-                .snapshots(),
+            stream: _firestore.getUserChatsStream(user.uid),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
@@ -293,19 +290,28 @@ class _ChatScreenState extends State<ChatScreen> {
 
                   if (otherId.isEmpty) return const SizedBox.shrink();
 
-                  return FutureBuilder<List<DocumentSnapshot?>>(
-                    future: Future.wait([
-                      FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(otherId)
-                          .get(),
-                      adId.isNotEmpty && !isDirectChat
-                          ? FirebaseFirestore.instance
-                              .collection('ads')
-                              .doc(adId)
-                              .get()
-                          : Future.value(null),
-                    ]),
+                  final fallbackOtherName = ((isBuyer
+                                  ? data['sellerName']
+                                  : data['buyerName']) as String? ??
+                              '')
+                          .trim();
+                  final lastSenderName =
+                      ((data['lastSenderName'] as String? ?? '')).trim();
+                  final fallbackProfilePhoto = ((isBuyer
+                                  ? data['sellerPhoto']
+                                  : data['buyerPhoto']) as String? ??
+                              '')
+                          .trim();
+                  final lastSenderPhoto =
+                      ((data['lastSenderPhoto'] as String? ?? '')).trim();
+
+                  return FutureBuilder<DocumentSnapshot?>(
+                    future: adId.isNotEmpty && !isDirectChat
+                        ? FirebaseFirestore.instance
+                            .collection('ads')
+                            .doc(adId)
+                            .get()
+                        : Future.value(null),
                     builder: (context, userSnap) {
                       if (userSnap.connectionState == ConnectionState.waiting) {
                         return ListTile(
@@ -343,33 +349,33 @@ class _ChatScreenState extends State<ChatScreen> {
                         );
                       }
 
-                      if (userSnap.hasError ||
-                          !userSnap.hasData ||
-                          userSnap.data == null ||
-                          userSnap.data!.isEmpty ||
-                          userSnap.data!.first?.data() == null) {
-                        return const SizedBox.shrink();
-                      }
-
-                      final userData =
-                          userSnap.data!.first!.data() as Map<String, dynamic>;
-                      final adSnapshot =
-                          userSnap.data!.length > 1 ? userSnap.data![1] : null;
+                      final adSnapshot = userSnap.data;
                       final adData = adSnapshot?.data() as Map<String, dynamic>?;
-                      final profilePhoto =
-                          (userData['profilePhoto'] as String? ?? '').trim();
-                      final firstName = userData['firstName'] as String? ?? '';
-                      final lastName = userData['lastName'] as String? ?? '';
                       final adTitle = (data['adTitle'] as String? ?? '').trim();
                       final adImages =
                           (adData?['images'] as List<dynamic>? ?? const [])
                               .whereType<String>()
                               .where((value) => value.trim().isNotEmpty)
                               .toList();
-                      final otherName =
-                          (firstName.isNotEmpty || lastName.isNotEmpty)
-                              ? '$firstName $lastName'.trim()
+                      final adSellerName = (((adData?['sellerUserName']
+                                              as String?) ??
+                                          (adData?['sellerName'] as String?) ??
+                                          '')
+                                      .trim());
+                      final otherName = fallbackOtherName.isNotEmpty
+                          ? fallbackOtherName
+                          : (!isDirectChat && isBuyer && adSellerName.isNotEmpty)
+                              ? adSellerName
+                              : (lastSenderName.isNotEmpty &&
+                                      (data['senderId'] as String? ?? '') !=
+                                          user.uid)
+                                  ? lastSenderName
                               : 'Usuario';
+                      final effectiveProfilePhoto = fallbackProfilePhoto.isNotEmpty
+                          ? fallbackProfilePhoto
+                          : ((data['senderId'] as String? ?? '') != user.uid
+                              ? lastSenderPhoto
+                              : '');
                       final userFirstName = _firstNameOnly(otherName);
                       final productTitle =
                           adTitle.isNotEmpty ? adTitle : 'Conversa';
@@ -384,6 +390,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               chatId: chatId,
                               otherUserId: otherId,
                               otherUserName: otherName,
+                              otherUserPhoto: effectiveProfilePhoto,
                               adId:
                                   !isDirectChat && adId.isNotEmpty ? adId : null,
                               sellerId: (data['sellerId'] as String?)
@@ -407,9 +414,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ? AppTheme.blackLight
                                 : const Color(0xFFF1F3F5),
                             child: isDirectChat
-                                ? (profilePhoto.isNotEmpty
+                                ? (effectiveProfilePhoto.isNotEmpty
                                     ? Image.network(
-                                        profilePhoto,
+                                        effectiveProfilePhoto,
                                         fit: BoxFit.cover,
                                         errorBuilder: (_, __, ___) => Center(
                                           child: Text(
