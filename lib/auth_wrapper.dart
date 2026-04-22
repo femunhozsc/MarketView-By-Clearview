@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -86,6 +87,13 @@ class _LaunchFlowState extends State<_LaunchFlow> {
   static const _minimumSplashTime = launchSplashSingleLoopDuration;
   static const _pollInterval = Duration(milliseconds: 120);
   static const List<String> _defaultCategoryOrder = categories;
+  static const List<String> _promoBannerAssets = [
+    'assets/images/banner_ad_1.png',
+    'assets/images/banner_ad_2.png',
+    'assets/images/banner_ad_3.png',
+    'assets/images/banner_ad_4.png',
+    'assets/images/banner_ad_5.png',
+  ];
   final FirestoreService _firestore = FirestoreService();
 
   _LaunchStage _stage = _LaunchStage.splash;
@@ -95,10 +103,50 @@ class _LaunchFlowState extends State<_LaunchFlow> {
   Map<String, List<AdModel>> _preloadedForYouCategoryAds = const {};
   List<String> _preloadedForYouCategories = const [];
   int _preloadedForYouLoadedCategoryIndex = 0;
+  Map<String, dynamic>? _preloadedGlobalSettings;
+  Map<String, dynamic>? _preloadedHomeBannerSettings;
   bool _marketplaceResolved = false;
   bool _forYouResolved = false;
   bool _forYouLoading = false;
   bool _forYouPersonalized = false;
+
+  List<String> _resolvePromoBannerSources(Map<String, dynamic>? data) {
+    final resolved = <String>[];
+    final bannerMap = data?['banners'];
+    final normalizedBannerMap = bannerMap is Map
+        ? Map<String, dynamic>.from(bannerMap)
+        : const <String, dynamic>{};
+
+    for (var index = 0; index < _promoBannerAssets.length; index++) {
+      final slot = index + 1;
+      final directUrl = (data?['banner${slot}Url'] ?? '').toString().trim();
+      final nestedBanner = normalizedBannerMap['$slot'] is Map<String, dynamic>
+          ? normalizedBannerMap['$slot'] as Map<String, dynamic>
+          : normalizedBannerMap['$slot'] is Map
+              ? Map<String, dynamic>.from(normalizedBannerMap['$slot'] as Map)
+              : null;
+      final nestedUrl = (nestedBanner?['imageUrl'] ?? '').toString().trim();
+      final resolvedSource = directUrl.isNotEmpty
+          ? directUrl
+          : nestedUrl.isNotEmpty
+              ? nestedUrl
+              : _promoBannerAssets[index];
+      resolved.add(resolvedSource);
+    }
+
+    return resolved;
+  }
+
+  Future<void> _precacheHomeBanners(List<String> sources) async {
+    for (final source in sources) {
+      final provider = source.startsWith('http')
+          ? NetworkImage(source)
+          : AssetImage(source) as ImageProvider;
+      try {
+        await precacheImage(provider, context);
+      } catch (_) {}
+    }
+  }
 
   List<String> _mergeCategoryOrder(List<String> priorityCategories) {
     final ordered = <String>[];
@@ -135,14 +183,31 @@ class _LaunchFlowState extends State<_LaunchFlow> {
       final results = await Future.wait([
         _firestore.getAds(limit: 60),
         _firestore.getStores(limit: 60),
+        FirebaseFirestore.instance
+            .collection('app_config')
+            .doc('global_settings')
+            .get(),
+        FirebaseFirestore.instance
+            .collection('app_config')
+            .doc('home_banners')
+            .get(),
         GoogleFonts.pendingFonts(),
       ]);
+
+      final globalSettings =
+          (results[2] as DocumentSnapshot<Map<String, dynamic>>).data();
+      final homeBannerSettings =
+          (results[3] as DocumentSnapshot<Map<String, dynamic>>).data();
+      await _precacheHomeBanners(
+          _resolvePromoBannerSources(homeBannerSettings));
 
       if (!mounted) return;
       setState(() {
         _preloadedAds = List<AdModel>.from(results[0] as List<AdModel>);
         _preloadedStores =
             List<StoreModel>.from(results[1] as List<StoreModel>);
+        _preloadedGlobalSettings = globalSettings;
+        _preloadedHomeBannerSettings = homeBannerSettings;
         _marketplaceResolved = true;
       });
     } catch (_) {
@@ -314,6 +379,8 @@ class _LaunchFlowState extends State<_LaunchFlow> {
               initialForYouCategories: _preloadedForYouCategories,
               initialForYouLoadedCategoryIndex:
                   _preloadedForYouLoadedCategoryIndex,
+              initialGlobalSettings: _preloadedGlobalSettings,
+              initialHomeBannerSettings: _preloadedHomeBannerSettings,
             ),
           ),
       },

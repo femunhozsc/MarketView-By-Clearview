@@ -15,6 +15,13 @@ class StorageService {
     );
   }
 
+  Future<String?> uploadUserBanner(String uid, File file) async {
+    return _uploadFile(
+      path: 'users/$uid/banner.jpg',
+      file: file,
+    );
+  }
+
   // Upload logo da loja
   Future<String?> uploadStoreLogo(String storeId, File file) async {
     return _uploadFile(
@@ -35,6 +42,13 @@ class StorageService {
   Future<String?> uploadAdPhoto(String adId, File file, int index) async {
     return _uploadFile(
       path: 'ads/$adId/photo_$index.jpg',
+      file: file,
+    );
+  }
+
+  Future<String?> uploadCommunityPostImage(String postId, File file) async {
+    return _uploadFile(
+      path: 'community_posts/$postId/image.jpg',
       file: file,
     );
   }

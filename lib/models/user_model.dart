@@ -8,6 +8,9 @@ class UserModel {
   final String email;
   final String phone;
   final String? profilePhoto;
+  final String? bannerPhoto;
+  final bool isVerifiedProfile;
+  final bool isOfficialProfile;
   final AddressModel address;
   final int searchRadius;
   final bool hasStore;
@@ -30,6 +33,9 @@ class UserModel {
     required this.email,
     required this.phone,
     this.profilePhoto,
+    this.bannerPhoto,
+    this.isVerifiedProfile = false,
+    this.isOfficialProfile = false,
     required this.address,
     this.searchRadius = 50,
     this.hasStore = false,
@@ -62,6 +68,9 @@ class UserModel {
       'email': email,
       'phone': phone,
       'profilePhoto': profilePhoto,
+      'bannerPhoto': bannerPhoto,
+      'isVerifiedProfile': isVerifiedProfile,
+      'isOfficialProfile': isOfficialProfile,
       'address': address.toMap(),
       'searchRadius': searchRadius,
       'hasStore': hasStore,
@@ -95,6 +104,9 @@ class UserModel {
       email: map['email'] ?? '',
       phone: map['phone'] ?? '',
       profilePhoto: map['profilePhoto'],
+      bannerPhoto: map['bannerPhoto'],
+      isVerifiedProfile: map['isVerifiedProfile'] ?? false,
+      isOfficialProfile: map['isOfficialProfile'] ?? false,
       address: AddressModel.fromMap(map['address'] ?? {}),
       searchRadius: map['searchRadius'] ?? 50,
       hasStore: (map['hasStore'] ?? false) || storeIds.isNotEmpty,
@@ -132,6 +144,9 @@ class UserModel {
     String? email,
     String? phone,
     String? profilePhoto,
+    String? bannerPhoto,
+    bool? isVerifiedProfile,
+    bool? isOfficialProfile,
     AddressModel? address,
     int? searchRadius,
     bool? hasStore,
@@ -153,6 +168,9 @@ class UserModel {
       email: email ?? this.email,
       phone: phone ?? this.phone,
       profilePhoto: profilePhoto ?? this.profilePhoto,
+      bannerPhoto: bannerPhoto ?? this.bannerPhoto,
+      isVerifiedProfile: isVerifiedProfile ?? this.isVerifiedProfile,
+      isOfficialProfile: isOfficialProfile ?? this.isOfficialProfile,
       address: address ?? this.address,
       searchRadius: searchRadius ?? this.searchRadius,
       hasStore: hasStore ?? this.hasStore,

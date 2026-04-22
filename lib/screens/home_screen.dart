@@ -22,6 +22,7 @@ import 'profile_screen.dart';
 import 'reviews_screen.dart';
 import 'recently_viewed_screen.dart';
 import 'sales_activity_screen.dart';
+import 'community_screen.dart';
 import 'for_you_screen.dart';
 import 'category_ads_screen.dart';
 import 'my_ads_screen.dart';
@@ -44,6 +45,8 @@ class HomeScreen extends StatefulWidget {
     this.initialForYouCategoryAds = const {},
     this.initialForYouCategories = const [],
     this.initialForYouLoadedCategoryIndex = 0,
+    this.initialGlobalSettings,
+    this.initialHomeBannerSettings,
   });
 
   final List<AdModel>? initialAds;
@@ -52,6 +55,8 @@ class HomeScreen extends StatefulWidget {
   final Map<String, List<AdModel>> initialForYouCategoryAds;
   final List<String> initialForYouCategories;
   final int initialForYouLoadedCategoryIndex;
+  final Map<String, dynamic>? initialGlobalSettings;
+  final Map<String, dynamic>? initialHomeBannerSettings;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -61,7 +66,7 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   static const double _campoMouraoLat = -24.0466;
   static const double _campoMouraoLng = -52.3780;
-  static const int _sectionCount = 7;
+  static const int _sectionCount = 8;
   static const double _pillSectionsHeight = 69;
   static const double _marketplaceActionsHeight = 60;
   static const List<String> _sellerStrengthOptions = [
@@ -265,6 +270,39 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  void _openCategoryFromSearch(String category) {
+    final resolvedCategory = AdModel.resolveCategoryValue(category);
+    FocusScope.of(context).unfocus();
+    context.read<UserProvider>().trackCategoryClick(resolvedCategory);
+    setState(() {
+      _isSearching = false;
+      _searchQuery = resolvedCategory;
+      _searchController.text = resolvedCategory;
+      _searchController.selection = TextSelection.collapsed(
+        offset: _searchController.text.length,
+      );
+      _userSearchSuggestions = [];
+      _storeSearchSuggestions = [];
+      _isLoadingUserSearch = false;
+    });
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CategoryAdsScreen(
+          category: resolvedCategory,
+          icon: _categoryIcon(resolvedCategory),
+          locationScope: _locationScope,
+          locationRegionKey: _locationRegionKey,
+          searchLat: _searchLat,
+          searchLng: _searchLng,
+          searchRadiusKm: _searchRadiusKm,
+          locationLabel: _locationLabel,
+        ),
+      ),
+    );
+  }
+
   Future<void> _onSearchChanged(String value) async {
     final trimmed = value.trim();
     setState(() {
@@ -316,8 +354,8 @@ class _HomeScreenState extends State<HomeScreen>
 
     final ranked = byId.values.toList()
       ..sort((a, b) {
-        final scoreCompare =
-            _storeSuggestionScore(b, query).compareTo(_storeSuggestionScore(a, query));
+        final scoreCompare = _storeSuggestionScore(b, query)
+            .compareTo(_storeSuggestionScore(a, query));
         if (scoreCompare != 0) return scoreCompare;
         return b.rating.compareTo(a.rating);
       });
@@ -371,6 +409,54 @@ class _HomeScreenState extends State<HomeScreen>
     return score;
   }
 
+  List<String> _matchingCategorySuggestions(String query, {int limit = 6}) {
+    final normalizedQuery = AdModel.normalizeValue(query).trim();
+    if (normalizedQuery.isEmpty) return const [];
+
+    final ranked = categories
+        .map((category) {
+          final display = AdModel.displayLabel(category);
+          final normalizedCategory = AdModel.normalizeValue(category);
+          final normalizedDisplay = AdModel.normalizeValue(display);
+          var score = 0;
+
+          if (normalizedCategory == normalizedQuery ||
+              normalizedDisplay == normalizedQuery) {
+            score += 300;
+          }
+          if (normalizedCategory.startsWith(normalizedQuery) ||
+              normalizedDisplay.startsWith(normalizedQuery)) {
+            score += 220;
+          }
+          if (normalizedCategory.contains(normalizedQuery) ||
+              normalizedDisplay.contains(normalizedQuery)) {
+            score += 160;
+          }
+
+          for (final term in normalizedQuery
+              .split(RegExp(r'[^a-z0-9]+'))
+              .where((term) => term.isNotEmpty)) {
+            if (normalizedCategory.contains(term) ||
+                normalizedDisplay.contains(term)) {
+              score += 30;
+            }
+          }
+
+          return MapEntry(category, score);
+        })
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) {
+        final scoreCompare = b.value.compareTo(a.value);
+        if (scoreCompare != 0) return scoreCompare;
+        return AdModel.displayLabel(a.key)
+            .length
+            .compareTo(AdModel.displayLabel(b.key).length);
+      });
+
+    return ranked.take(limit).map((entry) => entry.key).toList();
+  }
+
   void _setSelectedSection(
     int index, {
     bool animate = true,
@@ -405,10 +491,10 @@ class _HomeScreenState extends State<HomeScreen>
     if (_isSearching) return false;
     if (notification.metrics.axis != Axis.vertical) return false;
 
-    final showMarketplaceActions = _selectedSection == 1 ||
-        _selectedSection == 2 ||
-        _selectedSection == 4 ||
-        _selectedSection == 6;
+    final showMarketplaceActions = _selectedSection == 2 ||
+        _selectedSection == 3 ||
+        _selectedSection == 5 ||
+        _selectedSection == 7;
     final maxOffset = _marketplaceChromeMaxHeight(showMarketplaceActions);
 
     if (notification.metrics.pixels <= 0) {
@@ -867,22 +953,22 @@ class _HomeScreenState extends State<HomeScreen>
   List<AdModel> _filteredAdsForSection(int sectionIndex) {
     List<AdModel> ads = _realAds.isEmpty ? sampleAds : _realAds;
     switch (sectionIndex) {
-      case 1:
+      case 2:
         ads = ads
             .where((a) =>
                 a.intent == AdModel.intentSell && a.type == AdModel.productType)
             .toList();
         break;
-      case 2:
+      case 3:
         ads = ads
             .where((a) =>
                 a.intent == AdModel.intentSell && a.type == AdModel.serviceType)
             .toList();
         break;
-      case 4:
+      case 5:
         ads = ads.where((a) => a.intent == AdModel.intentBuy).toList();
         break;
-      case 6:
+      case 7:
         final user = context.read<UserProvider>().user;
         if (user != null) {
           ads = ads.where((a) => user.favoriteAdIds.contains(a.id)).toList();
@@ -996,17 +1082,67 @@ class _HomeScreenState extends State<HomeScreen>
     final query = _searchQuery.trim();
     final recentSearches = context.watch<UserProvider>().recentSearches;
     final textSuggestions = _searchTextSuggestions(recentSearches);
+    final categorySuggestions = query.isEmpty
+        ? categories
+        : _matchingCategorySuggestions(query, limit: 6);
 
     if (query.isEmpty) {
-      return Center(
-        child: Text(
-          'Digite para buscar anuncios, lojas e perfis',
-          style: GoogleFonts.roboto(
-            color: Colors.grey,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Categorias',
+              style: GoogleFonts.roboto(
+                color: Colors.grey,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
-        ),
+          ...categorySuggestions.map(
+            (category) {
+              final display = AdModel.displayLabel(category);
+              final color = _categoryColor(category);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(color: borderColor),
+                  ),
+                  tileColor: cardColor,
+                  leading: CircleAvatar(
+                    backgroundColor: color.withValues(alpha: 0.12),
+                    child: Icon(_categoryIcon(category), color: color),
+                  ),
+                  title: Text(
+                    display,
+                    style: GoogleFonts.roboto(
+                      color: textColor,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Abrir categoria',
+                    style: GoogleFonts.roboto(
+                      color: Colors.grey,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.grey,
+                  ),
+                  onTap: () => _openCategoryFromSearch(category),
+                ),
+              );
+            },
+          ),
+        ],
       );
     }
 
@@ -1052,6 +1188,63 @@ class _HomeScreenState extends State<HomeScreen>
             onTap: () => _commitSearchSuggestion(suggestion),
           ),
         ),
+        if (categorySuggestions.isNotEmpty) const SizedBox(height: 10),
+        if (categorySuggestions.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Categorias',
+              style: GoogleFonts.roboto(
+                color: Colors.grey,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          ...categorySuggestions.map(
+            (category) {
+              final display = AdModel.displayLabel(category);
+              final color = _categoryColor(category);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(color: borderColor),
+                  ),
+                  tileColor: cardColor,
+                  leading: CircleAvatar(
+                    backgroundColor: color.withValues(alpha: 0.12),
+                    child: Icon(_categoryIcon(category), color: color),
+                  ),
+                  title: Text(
+                    display,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.roboto(
+                      color: textColor,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Ir para categoria',
+                    style: GoogleFonts.roboto(
+                      color: Colors.grey,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.grey,
+                  ),
+                  onTap: () => _openCategoryFromSearch(category),
+                ),
+              );
+            },
+          ),
+        ],
         if (_storeSearchSuggestions.isNotEmpty) const SizedBox(height: 10),
         if (_storeSearchSuggestions.isNotEmpty) ...[
           Padding(
@@ -1078,10 +1271,10 @@ class _HomeScreenState extends State<HomeScreen>
                 leading: CircleAvatar(
                   backgroundColor:
                       AppTheme.facebookBlue.withValues(alpha: 0.12),
-                  backgroundImage: store.logo != null &&
-                          store.logo!.trim().isNotEmpty
-                      ? NetworkImage(store.logo!)
-                      : null,
+                  backgroundImage:
+                      store.logo != null && store.logo!.trim().isNotEmpty
+                          ? NetworkImage(store.logo!)
+                          : null,
                   child: store.logo == null || store.logo!.trim().isEmpty
                       ? const Icon(
                           Icons.storefront_rounded,
@@ -1294,10 +1487,10 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildHomeContent() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final locationLabel = _locationLabel;
-    final showMarketplaceActions = _selectedSection == 1 ||
-        _selectedSection == 2 ||
-        _selectedSection == 4 ||
-        _selectedSection == 6;
+    final showMarketplaceActions = _selectedSection == 2 ||
+        _selectedSection == 3 ||
+        _selectedSection == 5 ||
+        _selectedSection == 7;
     final chromeHeight = _marketplaceChromeMaxHeight(showMarketplaceActions);
     return Column(
       children: [
@@ -1395,6 +1588,8 @@ class _HomeScreenState extends State<HomeScreen>
           initialCategoryAds: widget.initialForYouCategoryAds,
           initialUserCategories: widget.initialForYouCategories,
           initialLoadedCategoryIndex: widget.initialForYouLoadedCategoryIndex,
+          initialGlobalSettings: widget.initialGlobalSettings,
+          initialHomeBannerSettings: widget.initialHomeBannerSettings,
           filters: _filters,
           locationScope: _locationScope,
           locationRegionKey: _locationRegionKey,
@@ -1403,10 +1598,12 @@ class _HomeScreenState extends State<HomeScreen>
           searchRadiusKm: _searchRadiusKm,
           locationLabel: _locationLabel,
           onViewMoreStores: () {
-            _setSelectedSection(3);
+            _setSelectedSection(4);
           },
         );
-      case 3: // Lojas
+      case 1: // Comunidade
+        return const CommunityScreen();
+      case 4: // Lojas
         return StoresScreen(
           stores: _realStores,
           isLoading: _isLoadingAds,
@@ -1418,7 +1615,7 @@ class _HomeScreenState extends State<HomeScreen>
           searchRadiusKm: _searchRadiusKm,
           locationLabel: _locationLabel,
         );
-      case 5: // Categorias
+      case 6: // Categorias
         return _buildCategoriesGrid(isDark);
       default: // Produtos, Servi\u00E7os, Compro, Favoritos
         return _buildFeed(isDark, sectionIndex);
@@ -1573,21 +1770,21 @@ class _HomeScreenState extends State<HomeScreen>
 
   // â”€â”€ Feed de anÃºncios â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   String _feedCountLabel(int sectionIndex, int count) {
-    if (sectionIndex == 4) {
+    if (sectionIndex == 5) {
       return count.toString() + (count == 1 ? ' pedido' : ' pedidos');
     }
     return count.toString() + (count == 1 ? ' an\u00FAncio' : ' an\u00FAncios');
   }
 
   String _feedEmptyTitle(int sectionIndex) {
-    if (sectionIndex == 4) {
+    if (sectionIndex == 5) {
       return 'Nenhum pedido encontrado';
     }
     return 'Nenhum an\u00FAncio encontrado';
   }
 
   String _feedEmptySubtitle(int sectionIndex) {
-    if (sectionIndex == 4) {
+    if (sectionIndex == 5) {
       return 'Quando algu\u00E9m publicar o que precisa, vai aparecer aqui.';
     }
     return 'Tente ajustar os filtros ou explorar outra se\u00E7\u00E3o.';
@@ -1937,20 +2134,28 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _openFilters() async {
     final minCtrl = TextEditingController(
-      text: _filters.minPrice?.toStringAsFixed(0) ?? '',
-    );
+        text: _filters.minPrice?.toStringAsFixed(0) ?? '');
     final maxCtrl = TextEditingController(
-      text: _filters.maxPrice?.toStringAsFixed(0) ?? '',
-    );
+        text: _filters.maxPrice?.toStringAsFixed(0) ?? '');
     final kmCtrl =
         TextEditingController(text: _filters.maxKm?.toString() ?? '');
-    final yearMinCtrl = TextEditingController(
-      text: _filters.minYear?.toString() ?? '',
-    );
-    final yearMaxCtrl = TextEditingController(
-      text: _filters.maxYear?.toString() ?? '',
-    );
+    final yearMinCtrl =
+        TextEditingController(text: _filters.minYear?.toString() ?? '');
+    final yearMaxCtrl =
+        TextEditingController(text: _filters.maxYear?.toString() ?? '');
+    final areaMinCtrl =
+        TextEditingController(text: _filters.minArea?.toStringAsFixed(0) ?? '');
+    final areaMaxCtrl =
+        TextEditingController(text: _filters.maxArea?.toStringAsFixed(0) ?? '');
+    final bedroomsCtrl =
+        TextEditingController(text: _filters.minBedrooms?.toString() ?? '');
+    final bathroomsCtrl =
+        TextEditingController(text: _filters.minBathrooms?.toString() ?? '');
+    final parkingCtrl =
+        TextEditingController(text: _filters.minParkingSpots?.toString() ?? '');
+
     MarketplaceFilters temp = _filters;
+    final sourceAds = _realAds.isEmpty ? sampleAds : _realAds;
     final allCategories = <String>['', ...categories];
     const typeOptions = ['', AdModel.productType, AdModel.serviceType];
     const propertyOfferOptions = [
@@ -1958,7 +2163,13 @@ class _HomeScreenState extends State<HomeScreen>
       AdModel.propertyOfferSale,
       AdModel.propertyOfferRent,
     ];
-    const manufacturers = [
+    const propertyFurnishingOptions = [
+      '',
+      AdModel.propertyFurnishingUnfurnished,
+      AdModel.propertyFurnishingSemi,
+      AdModel.propertyFurnishingFurnished,
+    ];
+    const fallbackManufacturers = [
       'Volkswagen',
       'Chevrolet',
       'Fiat',
@@ -1985,43 +2196,170 @@ class _HomeScreenState extends State<HomeScreen>
       'Ram',
       'Suzuki',
     ];
-    const fuels = [
-      'Gasolina',
-      'Etanol',
-      'Flex',
-      'Diesel',
-      'Eletrico',
-      'Hibrido',
-      'GNV',
-    ];
-    const vehicleFeatures = [
-      'Ar-condicionado',
-      'Direcao hidraulica',
-      'Airbag',
-      'ABS',
-      'Multimidia',
-      'Camera de re',
-    ];
 
     final result = await showModalBottomSheet<MarketplaceFilters>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       showDragHandle: true,
       backgroundColor: Theme.of(context).brightness == Brightness.dark
           ? AppTheme.blackCard
-          : Colors.white,
+          : const Color(0xFFF8FAFC),
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          final sheetBg = isDark ? AppTheme.blackCard : const Color(0xFFF8FAFC);
+          final cardBg = isDark ? AppTheme.blackLight : Colors.white;
+          final borderColor =
+              isDark ? AppTheme.blackBorder : const Color(0xFFE2E8F0);
+          final titleColor = isDark ? Colors.white : const Color(0xFF0F172A);
+          final subColor =
+              isDark ? AppTheme.whiteSecondary : const Color(0xFF64748B);
+          const activeColor = AppTheme.facebookBlue;
+
+          List<AdModel> scopedAds({
+            String? category,
+            String? adType,
+            String? categoryType,
+          }) {
+            return sourceAds.where((ad) {
+              if (category != null && category.isNotEmpty) {
+                if (AdModel.resolveCategoryValue(ad.category) != category) {
+                  return false;
+                }
+              }
+              if (adType != null && adType.isNotEmpty && ad.type != adType) {
+                return false;
+              }
+              if (categoryType != null && categoryType.isNotEmpty) {
+                final normalized = AdModel.normalizeValue(categoryType);
+                final adCategoryType =
+                    AdModel.normalizeValue(ad.categoryType?.trim() ?? '');
+                final adDisplayCategoryType =
+                    AdModel.normalizeValue(ad.displayCategoryTypeLabel);
+                if (adCategoryType != normalized &&
+                    adDisplayCategoryType != normalized) {
+                  return false;
+                }
+              }
+              return true;
+            }).toList();
+          }
+
           final selectedCategory =
               AdModel.resolveCategoryValue(temp.category ?? '');
           final normalizedCategory = AdModel.normalizeValue(selectedCategory);
           final selectedType = temp.adType ?? '';
-          final isProductContext =
-              selectedType.isEmpty || selectedType == AdModel.productType;
+          final selectedCategoryType = temp.categoryType ?? '';
+          final isServiceCategory =
+              serviceCategories.contains(selectedCategory);
+          final isProductCategory =
+              productCategories.contains(selectedCategory);
+          final isServiceContext = selectedType == AdModel.serviceType ||
+              (selectedType.isEmpty && isServiceCategory);
+          final isProductContext = selectedType == AdModel.productType ||
+              (selectedType.isEmpty &&
+                  (selectedCategory.isEmpty || isProductCategory));
           final isVehicle =
               normalizedCategory == 'veiculos' && isProductContext;
           final isProperty =
               normalizedCategory == 'imoveis' && isProductContext;
+
+          final relevantAds = scopedAds(
+            category: selectedCategory.isEmpty ? null : selectedCategory,
+            adType: selectedType,
+            categoryType: selectedCategoryType,
+          );
+
+          final categoryTypes = <String>[
+            '',
+            ...{
+              ...(categoryTypeOptions[selectedCategory] ?? const <String>[]),
+              ...relevantAds
+                  .map((ad) => ad.displayCategoryTypeLabel)
+                  .where((value) => value.trim().isNotEmpty),
+            }
+          ];
+
+          final manufacturerOptions = <String>[
+            '',
+            ...{
+              ...fallbackManufacturers,
+              ...relevantAds
+                  .map((ad) => ad.vehicleBrand?.trim() ?? '')
+                  .where((value) => value.isNotEmpty),
+            }
+          ];
+
+          final fuelOptions = <String>[
+            '',
+            ...{
+              ...vehicleFuelOptions,
+              ...relevantAds
+                  .map((ad) => ad.vehicleFuelType?.trim() ?? '')
+                  .where((value) => value.isNotEmpty),
+            }
+          ];
+
+          final vehicleColorOptionsDynamic = <String>[
+            '',
+            ...{
+              ...vehicleColorOptions,
+              ...relevantAds
+                  .map((ad) => ad.vehicleColor?.trim() ?? '')
+                  .where((value) => value.isNotEmpty),
+            }
+          ];
+
+          final servicePriceOptions = <String>[
+            '',
+            ...{
+              ...servicePricingModes,
+              ...relevantAds
+                  .map((ad) => ad.servicePriceType.trim())
+                  .where((value) => value.isNotEmpty),
+            }
+          ];
+
+          final attributeLabels = <String, String>{};
+          final attributeOptions = <String, Set<String>>{};
+          for (final ad in relevantAds) {
+            for (final attribute in ad.customAttributes) {
+              final key = attribute.key.trim();
+              final value = attribute.value.trim();
+              if (key.isEmpty || value.isEmpty) continue;
+              attributeLabels.putIfAbsent(key, () => attribute.label.trim());
+              attributeOptions.putIfAbsent(key, () => <String>{}).add(value);
+            }
+          }
+
+          int activeCount() {
+            var count = 0;
+            if (temp.sort != MarketplaceSort.recommended) count++;
+            if (temp.minPrice != null) count++;
+            if (temp.maxPrice != null) count++;
+            if (temp.adType?.isNotEmpty ?? false) count++;
+            if (temp.category?.isNotEmpty ?? false) count++;
+            if (temp.categoryType?.isNotEmpty ?? false) count++;
+            if (temp.publicationDate != PublicationDateFilter.any) count++;
+            if (temp.servicePriceType?.isNotEmpty ?? false) count++;
+            if (temp.propertyOfferType?.isNotEmpty ?? false) count++;
+            if (temp.propertyFurnishing?.isNotEmpty ?? false) count++;
+            if (temp.minArea != null) count++;
+            if (temp.maxArea != null) count++;
+            if (temp.minBedrooms != null) count++;
+            if (temp.minBathrooms != null) count++;
+            if (temp.minParkingSpots != null) count++;
+            if (temp.minYear != null) count++;
+            if (temp.maxYear != null) count++;
+            if (temp.manufacturer?.isNotEmpty ?? false) count++;
+            if (temp.fuelType?.isNotEmpty ?? false) count++;
+            if (temp.vehicleColor?.isNotEmpty ?? false) count++;
+            if (temp.maxKm != null) count++;
+            count += temp.vehicleFeatures.length;
+            count += temp.customAttributeFilters.length;
+            return count;
+          }
 
           void clearVehicleFilters() {
             kmCtrl.clear();
@@ -2030,38 +2368,204 @@ class _HomeScreenState extends State<HomeScreen>
             temp = temp.copyWith(
               manufacturer: '',
               fuelType: '',
-              transmission: '',
+              vehicleColor: '',
               vehicleFeatures: <String>{},
               resetManufacturer: true,
               resetFuelType: true,
-              resetTransmission: true,
+              resetVehicleColor: true,
               resetMaxKm: true,
               resetMinYear: true,
               resetMaxYear: true,
             );
           }
 
-          void syncDependentFilters() {
-            final currentCategory = AdModel.normalizeValue(
-              AdModel.resolveCategoryValue(temp.category ?? ''),
+          void clearPropertyFilters() {
+            areaMinCtrl.clear();
+            areaMaxCtrl.clear();
+            bedroomsCtrl.clear();
+            bathroomsCtrl.clear();
+            parkingCtrl.clear();
+            temp = temp.copyWith(
+              propertyOfferType: '',
+              propertyFurnishing: '',
+              resetPropertyOfferType: true,
+              resetPropertyFurnishing: true,
+              resetMinArea: true,
+              resetMaxArea: true,
+              resetMinBedrooms: true,
+              resetMinBathrooms: true,
+              resetMinParkingSpots: true,
             );
-            final currentType = temp.adType ?? '';
-            final currentIsProductContext =
-                currentType.isEmpty || currentType == AdModel.productType;
+          }
 
-            if (!(currentCategory == 'veiculos' && currentIsProductContext)) {
-              clearVehicleFilters();
-            }
-            if (!(currentCategory == 'imoveis' && currentIsProductContext)) {
+          void clearServiceFilters() {
+            temp = temp.copyWith(
+              servicePriceType: '',
+              resetServicePriceType: true,
+            );
+          }
+
+          void syncDependentFilters() {
+            final currentCategory =
+                AdModel.resolveCategoryValue(temp.category ?? '');
+            final currentType = temp.adType ?? '';
+            final currentIsServiceCategory =
+                serviceCategories.contains(currentCategory);
+            final currentIsProductCategory =
+                productCategories.contains(currentCategory);
+            final currentIsServiceContext =
+                currentType == AdModel.serviceType ||
+                    (currentType.isEmpty && currentIsServiceCategory);
+            final currentIsProductContext =
+                currentType == AdModel.productType ||
+                    (currentType.isEmpty &&
+                        (currentCategory.isEmpty || currentIsProductCategory));
+            final currentIsVehicle =
+                AdModel.normalizeValue(currentCategory) == 'veiculos' &&
+                    currentIsProductContext;
+            final currentIsProperty =
+                AdModel.normalizeValue(currentCategory) == 'imoveis' &&
+                    currentIsProductContext;
+            final currentCategoryTypes = <String>{
+              ...(categoryTypeOptions[currentCategory] ?? const <String>[]),
+              ...sourceAds
+                  .where((ad) =>
+                      AdModel.resolveCategoryValue(ad.category) ==
+                      currentCategory)
+                  .map((ad) => ad.displayCategoryTypeLabel)
+                  .where((value) => value.trim().isNotEmpty),
+            };
+
+            if (temp.categoryType?.isNotEmpty == true &&
+                !currentCategoryTypes.contains(temp.categoryType)) {
               temp = temp.copyWith(
-                propertyOfferType: '',
-                resetPropertyOfferType: true,
+                categoryType: '',
+                resetCategoryType: true,
               );
             }
+
+            if (!currentIsVehicle) {
+              clearVehicleFilters();
+            }
+            if (!currentIsProperty) {
+              clearPropertyFilters();
+            }
+            if (!currentIsServiceContext) {
+              clearServiceFilters();
+            }
+
+            final nextAttributeFilters =
+                Map<String, String>.from(temp.customAttributeFilters)
+                  ..removeWhere((key, _) => !attributeOptions.containsKey(key));
+            temp = temp.copyWith(
+              customAttributeFilters: nextAttributeFilters,
+            );
+          }
+
+          Widget section(
+            String title,
+            List<Widget> children, {
+            String? subtitle,
+            IconData? icon,
+          }) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: borderColor),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (icon != null) ...[
+                        Icon(icon, color: activeColor, size: 18),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: GoogleFonts.roboto(
+                            color: titleColor,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.roboto(
+                        color: subColor,
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  ...children,
+                ],
+              ),
+            );
+          }
+
+          Widget twoInputs(
+            TextEditingController leftCtrl,
+            String leftLabel,
+            TextEditingController rightCtrl,
+            String rightLabel,
+          ) {
+            return Row(
+              children: [
+                Expanded(
+                  child: _input(leftLabel, leftCtrl, TextInputType.number),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _input(rightLabel, rightCtrl, TextInputType.number),
+                ),
+              ],
+            );
+          }
+
+          Widget choiceWrap<T>({
+            required List<T> values,
+            required T selectedValue,
+            required String Function(T value) labelBuilder,
+            required void Function(T value) onSelected,
+          }) {
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: values.map((value) {
+                final isSelected = value == selectedValue;
+                return ChoiceChip(
+                  label: Text(labelBuilder(value)),
+                  selected: isSelected,
+                  onSelected: (_) => onSelected(value),
+                  labelStyle: GoogleFonts.roboto(
+                    color: isSelected ? Colors.white : titleColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  side: BorderSide(
+                    color: isSelected ? activeColor : borderColor,
+                  ),
+                  backgroundColor: isDark ? AppTheme.blackCard : Colors.white,
+                  selectedColor: activeColor,
+                );
+              }).toList(),
+            );
           }
 
           return SafeArea(
-            child: Padding(
+            child: Container(
+              color: sheetBg,
               padding: EdgeInsets.fromLTRB(
                 16,
                 4,
@@ -2072,196 +2576,394 @@ class _HomeScreenState extends State<HomeScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Filtros',
-                      style: GoogleFonts.roboto(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _dropdown<MarketplaceSort>(
-                      'Classificar por',
-                      temp.sort,
-                      MarketplaceSort.values,
-                      (v) => setModalState(
-                        () => temp = temp.copyWith(sort: v!),
-                      ),
-                      (v) => {
-                        MarketplaceSort.recommended: 'Relevância',
-                        MarketplaceSort.newest: 'Mais recentes',
-                        MarketplaceSort.priceLow: 'Menor preço',
-                        MarketplaceSort.priceHigh: 'Maior preço',
-                      }[v]!,
-                    ),
-                    const SizedBox(height: 10),
                     Row(
                       children: [
                         Expanded(
-                          child: _input(
-                            'Preço mín',
-                            minCtrl,
-                            TextInputType.number,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Filtros avançados',
+                                style: GoogleFonts.roboto(
+                                  color: titleColor,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${activeCount()} filtro(s) ativo(s)',
+                                style: GoogleFonts.roboto(
+                                  color: subColor,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _input(
-                            'Preço máx',
-                            maxCtrl,
-                            TextInputType.number,
-                          ),
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.pop(context, MarketplaceFilters.empty),
+                          child: const Text('Limpar tudo'),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    _dropdown<PublicationDateFilter>(
-                      'Data de publicação',
-                      temp.publicationDate,
-                      PublicationDateFilter.values,
-                      (v) => setModalState(
-                        () => temp = temp.copyWith(publicationDate: v!),
-                      ),
-                      (v) => {
-                        PublicationDateFilter.any: 'Qualquer data',
-                        PublicationDateFilter.last24h: 'Últimas 24h',
-                        PublicationDateFilter.last7days: 'Últimos 7 dias',
-                        PublicationDateFilter.last30days: 'Últimos 30 dias',
-                      }[v]!,
-                    ),
-                    const SizedBox(height: 10),
-                    _dropdown<String>(
-                      'Tipo',
-                      temp.adType ?? '',
-                      typeOptions,
-                      (v) => setModalState(() {
-                        temp = temp.copyWith(
-                          adType: v,
-                          resetAdType: v == null || v.isEmpty,
-                        );
-                        syncDependentFilters();
-                      }),
-                      (v) => v.isEmpty ? 'Todos' : AdModel.displayLabel(v),
-                    ),
-                    const SizedBox(height: 10),
-                    _dropdown<String>(
-                      'Categoria',
-                      temp.category ?? '',
-                      allCategories,
-                      (v) => setModalState(() {
-                        temp = temp.copyWith(
-                          category: v,
-                          resetCategory: v == null || v.isEmpty,
-                        );
-                        syncDependentFilters();
-                      }),
-                      (v) => v.isEmpty ? 'Todas' : AdModel.displayLabel(v),
-                    ),
-                    if (isProperty) ...[
-                      const SizedBox(height: 10),
-                      _dropdown<String>(
-                        'Negócio',
-                        temp.propertyOfferType ?? '',
-                        propertyOfferOptions,
-                        (v) => setModalState(
-                          () => temp = temp.copyWith(
-                            propertyOfferType: v,
-                            resetPropertyOfferType: v == null || v.isEmpty,
-                          ),
+                    const SizedBox(height: 16),
+                    section(
+                      'Visão geral',
+                      icon: Icons.tune_rounded,
+                      subtitle:
+                          'Defina o tipo, categoria, data e faixa de preço.',
+                      [
+                        choiceWrap<String>(
+                          values: typeOptions,
+                          selectedValue: temp.adType ?? '',
+                          labelBuilder: (value) => value.isEmpty
+                              ? 'Todos'
+                              : AdModel.displayLabel(value),
+                          onSelected: (value) => setModalState(() {
+                            temp = temp.copyWith(
+                              adType: value,
+                              resetAdType: value.isEmpty,
+                            );
+                            syncDependentFilters();
+                          }),
                         ),
-                        (v) => v.isEmpty ? 'Todos' : AdModel.displayLabel(v),
-                      ),
-                    ],
-                    if (isVehicle) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'Filtros de veículos',
-                        style: GoogleFonts.roboto(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _input(
-                              'Ano mín',
-                              yearMinCtrl,
-                              TextInputType.number,
-                            ),
+                        const SizedBox(height: 14),
+                        _dropdown<MarketplaceSort>(
+                          'Classificar por',
+                          temp.sort,
+                          MarketplaceSort.values,
+                          (v) => setModalState(
+                            () => temp = temp.copyWith(sort: v!),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _input(
-                              'Ano máx',
-                              yearMaxCtrl,
-                              TextInputType.number,
-                            ),
+                          (v) => {
+                            MarketplaceSort.recommended: 'Relevância',
+                            MarketplaceSort.newest: 'Mais recentes',
+                            MarketplaceSort.priceLow: 'Menor preço',
+                            MarketplaceSort.priceHigh: 'Maior preço',
+                          }[v]!,
+                        ),
+                        const SizedBox(height: 12),
+                        _dropdown<PublicationDateFilter>(
+                          'Data de publicação',
+                          temp.publicationDate,
+                          PublicationDateFilter.values,
+                          (v) => setModalState(
+                            () => temp = temp.copyWith(publicationDate: v!),
+                          ),
+                          (v) => {
+                            PublicationDateFilter.any: 'Qualquer data',
+                            PublicationDateFilter.last24h: 'Últimas 24h',
+                            PublicationDateFilter.last7days: 'Últimos 7 dias',
+                            PublicationDateFilter.last30days: 'Últimos 30 dias',
+                          }[v]!,
+                        ),
+                        const SizedBox(height: 12),
+                        _dropdown<String>(
+                          'Categoria',
+                          temp.category ?? '',
+                          allCategories,
+                          (v) => setModalState(() {
+                            temp = temp.copyWith(
+                              category: v,
+                              resetCategory: v == null || v.isEmpty,
+                            );
+                            syncDependentFilters();
+                          }),
+                          (v) => v.isEmpty ? 'Todas' : AdModel.displayLabel(v),
+                        ),
+                        if (categoryTypes.length > 1) ...[
+                          const SizedBox(height: 12),
+                          _dropdown<String>(
+                            'Subtipo',
+                            temp.categoryType ?? '',
+                            categoryTypes,
+                            (v) => setModalState(() {
+                              temp = temp.copyWith(
+                                categoryType: v,
+                                resetCategoryType: v == null || v.isEmpty,
+                                resetCustomAttributeFilters: true,
+                              );
+                            }),
+                            (v) =>
+                                v.isEmpty ? 'Todos' : AdModel.displayLabel(v),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        twoInputs(
+                          minCtrl,
+                          'Preço mín.',
+                          maxCtrl,
+                          'Preço máx.',
+                        ),
+                      ],
+                    ),
+                    if (isServiceContext)
+                      section(
+                        'Serviços',
+                        icon: Icons.miscellaneous_services_rounded,
+                        subtitle:
+                            'Filtre pela forma de cobrança do serviço anunciado.',
+                        [
+                          choiceWrap<String>(
+                            values: servicePriceOptions,
+                            selectedValue: temp.servicePriceType ?? '',
+                            labelBuilder: (value) => value.isEmpty
+                                ? 'Qualquer cobrança'
+                                : (servicePricingModeLabels[value] ??
+                                    AdModel.displayLabel(value)),
+                            onSelected: (value) => setModalState(() {
+                              temp = temp.copyWith(
+                                servicePriceType: value,
+                                resetServicePriceType: value.isEmpty,
+                              );
+                            }),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      _dropdown<String>(
-                        'Fabricante',
-                        temp.manufacturer ?? '',
-                        const ['', ...manufacturers],
-                        (v) => setModalState(
-                          () => temp = temp.copyWith(
-                            manufacturer: v,
-                            resetManufacturer: v == null || v.isEmpty,
-                          ),
-                        ),
-                        (v) => v.isEmpty ? 'Todos' : v,
-                      ),
-                      const SizedBox(height: 10),
-                      _dropdown<String>(
-                        'Tipo de combustível',
-                        temp.fuelType ?? '',
-                        const ['', ...fuels],
-                        (v) => setModalState(
-                          () => temp = temp.copyWith(
-                            fuelType: v,
-                            resetFuelType: v == null || v.isEmpty,
-                          ),
-                        ),
-                        (v) => v.isEmpty ? 'Todos' : AdModel.displayLabel(v),
-                      ),
-                      const SizedBox(height: 10),
-                      _input(
-                        'Quilometragem máxima',
-                        kmCtrl,
-                        TextInputType.number,
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        'Recursos do veículo',
-                        style: GoogleFonts.roboto(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        children: vehicleFeatures.map((feature) {
-                          final selected =
-                              temp.vehicleFeatures.contains(feature);
-                          return FilterChip(
-                            label: Text(
-                              AdModel.displayLabel(feature),
-                              style: GoogleFonts.roboto(),
-                            ),
-                            selected: selected,
+                    if (isProperty)
+                      section(
+                        'Imóveis',
+                        icon: Icons.home_work_rounded,
+                        subtitle:
+                            'Inclua subtipo, negócio, mobília e características do imóvel.',
+                        [
+                          choiceWrap<String>(
+                            values: propertyOfferOptions,
+                            selectedValue: temp.propertyOfferType ?? '',
+                            labelBuilder: (value) => value.isEmpty
+                                ? 'Venda ou aluguel'
+                                : AdModel.displayLabel(value),
                             onSelected: (value) => setModalState(() {
-                              final next =
-                                  Set<String>.from(temp.vehicleFeatures);
-                              value ? next.add(feature) : next.remove(feature);
-                              temp = temp.copyWith(vehicleFeatures: next);
+                              temp = temp.copyWith(
+                                propertyOfferType: value,
+                                resetPropertyOfferType: value.isEmpty,
+                              );
                             }),
-                          );
-                        }).toList(),
+                          ),
+                          const SizedBox(height: 12),
+                          choiceWrap<String>(
+                            values: propertyFurnishingOptions,
+                            selectedValue: temp.propertyFurnishing ?? '',
+                            labelBuilder: (value) => value.isEmpty
+                                ? 'Qualquer mobília'
+                                : (propertyFurnishingLabels[value] ??
+                                    AdModel.displayLabel(value)),
+                            onSelected: (value) => setModalState(() {
+                              temp = temp.copyWith(
+                                propertyFurnishing: value,
+                                resetPropertyFurnishing: value.isEmpty,
+                              );
+                            }),
+                          ),
+                          const SizedBox(height: 12),
+                          twoInputs(
+                            areaMinCtrl,
+                            'Área mín. m²',
+                            areaMaxCtrl,
+                            'Área máx. m²',
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _input(
+                                  'Quartos mín.',
+                                  bedroomsCtrl,
+                                  TextInputType.number,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _input(
+                                  'Banheiros mín.',
+                                  bathroomsCtrl,
+                                  TextInputType.number,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _input(
+                                  'Vagas mín.',
+                                  parkingCtrl,
+                                  TextInputType.number,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                    ],
-                    const SizedBox(height: 16),
+                    if (isVehicle)
+                      section(
+                        'Veículos',
+                        icon: Icons.directions_car_filled_rounded,
+                        subtitle:
+                            'Agora o filtro usa marca, combustível, cor, ano, km e opcionais reais do anúncio.',
+                        [
+                          twoInputs(
+                            yearMinCtrl,
+                            'Ano mín.',
+                            yearMaxCtrl,
+                            'Ano máx.',
+                          ),
+                          const SizedBox(height: 12),
+                          _dropdown<String>(
+                            'Fabricante',
+                            temp.manufacturer ?? '',
+                            manufacturerOptions,
+                            (v) => setModalState(() {
+                              temp = temp.copyWith(
+                                manufacturer: v,
+                                resetManufacturer: v == null || v.isEmpty,
+                              );
+                            }),
+                            (v) => v.isEmpty ? 'Todas' : v,
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _dropdown<String>(
+                                  'Combustível',
+                                  temp.fuelType ?? '',
+                                  fuelOptions,
+                                  (v) => setModalState(() {
+                                    temp = temp.copyWith(
+                                      fuelType: v,
+                                      resetFuelType: v == null || v.isEmpty,
+                                    );
+                                  }),
+                                  (v) => v.isEmpty
+                                      ? 'Todos'
+                                      : AdModel.displayLabel(v),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _dropdown<String>(
+                                  'Cor',
+                                  temp.vehicleColor ?? '',
+                                  vehicleColorOptionsDynamic,
+                                  (v) => setModalState(() {
+                                    temp = temp.copyWith(
+                                      vehicleColor: v,
+                                      resetVehicleColor: v == null || v.isEmpty,
+                                    );
+                                  }),
+                                  (v) => v.isEmpty
+                                      ? 'Todas'
+                                      : AdModel.displayLabel(v),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          _input(
+                            'Quilometragem máxima',
+                            kmCtrl,
+                            TextInputType.number,
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: vehicleOptionalSuggestions.map((feature) {
+                              final selected =
+                                  temp.vehicleFeatures.contains(feature);
+                              return FilterChip(
+                                label: Text(AdModel.displayLabel(feature)),
+                                selected: selected,
+                                onSelected: (value) => setModalState(() {
+                                  final next =
+                                      Set<String>.from(temp.vehicleFeatures);
+                                  value
+                                      ? next.add(feature)
+                                      : next.remove(feature);
+                                  temp = temp.copyWith(vehicleFeatures: next);
+                                }),
+                                selectedColor:
+                                    activeColor.withValues(alpha: 0.15),
+                                checkmarkColor: activeColor,
+                                side: BorderSide(
+                                  color: selected ? activeColor : borderColor,
+                                ),
+                                labelStyle: GoogleFonts.roboto(
+                                  color: titleColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    if (attributeOptions.isNotEmpty)
+                      section(
+                        'Especificações da categoria',
+                        icon: Icons.category_rounded,
+                        subtitle:
+                            'Filtros dinâmicos vindos dos atributos dos anúncios dessa categoria.',
+                        [
+                          ...attributeOptions.entries.map((entry) {
+                            final key = entry.key;
+                            final values = entry.value.toList()..sort();
+                            final label = attributeLabels[key] ?? key;
+                            final selected =
+                                temp.customAttributeFilters[key] ?? '';
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    label,
+                                    style: GoogleFonts.roboto(
+                                      color: titleColor,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      ChoiceChip(
+                                        label: const Text('Todos'),
+                                        selected: selected.isEmpty,
+                                        onSelected: (_) => setModalState(() {
+                                          final next = Map<String, String>.from(
+                                            temp.customAttributeFilters,
+                                          )..remove(key);
+                                          temp = temp.copyWith(
+                                            customAttributeFilters: next,
+                                          );
+                                        }),
+                                      ),
+                                      ...values.map(
+                                        (value) => ChoiceChip(
+                                          label: Text(value),
+                                          selected: selected == value,
+                                          onSelected: (_) => setModalState(() {
+                                            final next =
+                                                Map<String, String>.from(
+                                              temp.customAttributeFilters,
+                                            )..[key] = value;
+                                            temp = temp.copyWith(
+                                              customAttributeFilters: next,
+                                            );
+                                          }),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
                         Expanded(
@@ -2270,12 +2972,15 @@ class _HomeScreenState extends State<HomeScreen>
                               context,
                               MarketplaceFilters.empty,
                             ),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                            ),
                             child: const Text('Limpar'),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 12),
                         Expanded(
-                          child: ElevatedButton(
+                          child: FilledButton(
                             onPressed: () {
                               final parsed = temp.copyWith(
                                 minPrice: double.tryParse(minCtrl.text.trim()),
@@ -2283,15 +2988,36 @@ class _HomeScreenState extends State<HomeScreen>
                                 maxKm: int.tryParse(kmCtrl.text.trim()),
                                 minYear: int.tryParse(yearMinCtrl.text.trim()),
                                 maxYear: int.tryParse(yearMaxCtrl.text.trim()),
+                                minArea:
+                                    double.tryParse(areaMinCtrl.text.trim()),
+                                maxArea:
+                                    double.tryParse(areaMaxCtrl.text.trim()),
+                                minBedrooms:
+                                    int.tryParse(bedroomsCtrl.text.trim()),
+                                minBathrooms:
+                                    int.tryParse(bathroomsCtrl.text.trim()),
+                                minParkingSpots:
+                                    int.tryParse(parkingCtrl.text.trim()),
                                 resetMinPrice: minCtrl.text.trim().isEmpty,
                                 resetMaxPrice: maxCtrl.text.trim().isEmpty,
                                 resetMaxKm: kmCtrl.text.trim().isEmpty,
                                 resetMinYear: yearMinCtrl.text.trim().isEmpty,
                                 resetMaxYear: yearMaxCtrl.text.trim().isEmpty,
+                                resetMinArea: areaMinCtrl.text.trim().isEmpty,
+                                resetMaxArea: areaMaxCtrl.text.trim().isEmpty,
+                                resetMinBedrooms:
+                                    bedroomsCtrl.text.trim().isEmpty,
+                                resetMinBathrooms:
+                                    bathroomsCtrl.text.trim().isEmpty,
+                                resetMinParkingSpots:
+                                    parkingCtrl.text.trim().isEmpty,
                               );
                               Navigator.pop(context, parsed);
                             },
-                            child: const Text('Aplicar'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                            ),
+                            child: const Text('Aplicar filtros'),
                           ),
                         ),
                       ],
@@ -2747,7 +3473,7 @@ class _HomeScreenState extends State<HomeScreen>
                   textColor, subColor,
                   onTap: () => _handleAuthRequired(() {
                         setState(() => _selectedNavIndex = 0);
-                        _setSelectedSection(6);
+                        _setSelectedSection(7);
                       })),
               _drawerItem(Icons.chat_bubble_outline_rounded, 'Mensagens',
                   textColor, subColor,
@@ -3003,7 +3729,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _openCreateAd() async {
     final intent =
-        _selectedSection == 4 ? AdModel.intentBuy : AdModel.intentSell;
+        _selectedSection == 5 ? AdModel.intentBuy : AdModel.intentSell;
     await Navigator.push(
       context,
       PageRouteBuilder(

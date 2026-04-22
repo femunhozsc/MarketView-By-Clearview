@@ -15,6 +15,8 @@ class StoreModel {
   final String description;
   final AddressModel address;
   final DateTime createdAt;
+  final bool isVerifiedProfile;
+  final bool isOfficialProfile;
   final bool isActive;
   final double rating;
   final int totalReviews;
@@ -39,6 +41,8 @@ class StoreModel {
     required this.description,
     required this.address,
     required this.createdAt,
+    this.isVerifiedProfile = false,
+    this.isOfficialProfile = true,
     this.isActive = true,
     this.rating = 0.0,
     this.totalReviews = 0,
@@ -69,6 +73,8 @@ class StoreModel {
       'description': description,
       'address': address.toMap(),
       'createdAt': Timestamp.fromDate(createdAt),
+      'isVerifiedProfile': isVerifiedProfile,
+      'isOfficialProfile': isOfficialProfile,
       'isActive': isActive,
       'rating': rating,
       'totalReviews': totalReviews,
@@ -110,6 +116,8 @@ class StoreModel {
       description: map['description'] ?? '',
       address: AddressModel.fromMap(map['address'] ?? {}),
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      isVerifiedProfile: map['isVerifiedProfile'] ?? false,
+      isOfficialProfile: map['isOfficialProfile'] ?? true,
       isActive: map['isActive'] ?? true,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
       totalReviews: map['totalReviews'] ?? 0,
@@ -150,6 +158,8 @@ class StoreModel {
     String? description,
     AddressModel? address,
     DateTime? createdAt,
+    bool? isVerifiedProfile,
+    bool? isOfficialProfile,
     bool? isActive,
     double? rating,
     int? totalReviews,
@@ -175,6 +185,8 @@ class StoreModel {
       description: description ?? this.description,
       address: address ?? this.address,
       createdAt: createdAt ?? this.createdAt,
+      isVerifiedProfile: isVerifiedProfile ?? this.isVerifiedProfile,
+      isOfficialProfile: isOfficialProfile ?? this.isOfficialProfile,
       isActive: isActive ?? this.isActive,
       rating: rating ?? this.rating,
       totalReviews: totalReviews ?? this.totalReviews,

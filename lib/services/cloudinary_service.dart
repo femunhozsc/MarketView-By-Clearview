@@ -135,6 +135,10 @@ class CloudinaryService {
     return uploadImageUrl(file, folder: 'users/$uid');
   }
 
+  Future<String?> uploadUserBanner(String uid, File file) async {
+    return uploadImageUrl(file, folder: 'users/$uid');
+  }
+
   Future<String?> uploadStoreLogo(String storeId, File file) async {
     return uploadImageUrl(file, folder: 'stores/$storeId');
   }
@@ -153,6 +157,10 @@ class CloudinaryService {
 
   Future<String?> uploadAdPhoto(String adId, File file, int index) async {
     return uploadImageUrl(file, folder: 'ads/$adId');
+  }
+
+  Future<String?> uploadCommunityPostImage(String postId, File file) async {
+    return uploadImageUrl(file, folder: 'community_posts/$postId');
   }
 
   Future<File?> pickAndCropImage({

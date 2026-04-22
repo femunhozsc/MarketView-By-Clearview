@@ -13,34 +13,54 @@ class MarketplaceFilters {
   final double? minPrice;
   final double? maxPrice;
   final String? adType;
+  final String? categoryType;
+  final String? servicePriceType;
   final String? propertyOfferType;
+  final String? propertyFurnishing;
   final String? condition;
   final PublicationDateFilter publicationDate;
   final String? category;
+  final double? minArea;
+  final double? maxArea;
+  final int? minBedrooms;
+  final int? minBathrooms;
+  final int? minParkingSpots;
   final int? minYear;
   final int? maxYear;
   final String? manufacturer;
   final String? fuelType;
+  final String? vehicleColor;
   final int? maxKm;
   final String? transmission;
   final Set<String> vehicleFeatures;
+  final Map<String, String> customAttributeFilters;
 
   const MarketplaceFilters({
     this.sort = MarketplaceSort.recommended,
     this.minPrice,
     this.maxPrice,
     this.adType,
+    this.categoryType,
+    this.servicePriceType,
     this.propertyOfferType,
+    this.propertyFurnishing,
     this.condition,
     this.publicationDate = PublicationDateFilter.any,
     this.category,
+    this.minArea,
+    this.maxArea,
+    this.minBedrooms,
+    this.minBathrooms,
+    this.minParkingSpots,
     this.minYear,
     this.maxYear,
     this.manufacturer,
     this.fuelType,
+    this.vehicleColor,
     this.maxKm,
     this.transmission,
     this.vehicleFeatures = const {},
+    this.customAttributeFilters = const {},
   });
 
   MarketplaceFilters copyWith({
@@ -48,50 +68,91 @@ class MarketplaceFilters {
     double? minPrice,
     double? maxPrice,
     String? adType,
+    String? categoryType,
+    String? servicePriceType,
     String? propertyOfferType,
+    String? propertyFurnishing,
     String? condition,
     PublicationDateFilter? publicationDate,
     String? category,
+    double? minArea,
+    double? maxArea,
+    int? minBedrooms,
+    int? minBathrooms,
+    int? minParkingSpots,
     int? minYear,
     int? maxYear,
     String? manufacturer,
     String? fuelType,
+    String? vehicleColor,
     int? maxKm,
     String? transmission,
     Set<String>? vehicleFeatures,
+    Map<String, String>? customAttributeFilters,
     bool resetMinPrice = false,
     bool resetMaxPrice = false,
     bool resetAdType = false,
+    bool resetCategoryType = false,
+    bool resetServicePriceType = false,
     bool resetPropertyOfferType = false,
+    bool resetPropertyFurnishing = false,
     bool resetCondition = false,
     bool resetCategory = false,
+    bool resetMinArea = false,
+    bool resetMaxArea = false,
+    bool resetMinBedrooms = false,
+    bool resetMinBathrooms = false,
+    bool resetMinParkingSpots = false,
     bool resetMinYear = false,
     bool resetMaxYear = false,
     bool resetManufacturer = false,
     bool resetFuelType = false,
+    bool resetVehicleColor = false,
     bool resetMaxKm = false,
     bool resetTransmission = false,
+    bool resetCustomAttributeFilters = false,
   }) {
     return MarketplaceFilters(
       sort: sort ?? this.sort,
       minPrice: resetMinPrice ? null : (minPrice ?? this.minPrice),
       maxPrice: resetMaxPrice ? null : (maxPrice ?? this.maxPrice),
       adType: resetAdType ? null : (adType ?? this.adType),
+      categoryType:
+          resetCategoryType ? null : (categoryType ?? this.categoryType),
+      servicePriceType: resetServicePriceType
+          ? null
+          : (servicePriceType ?? this.servicePriceType),
       propertyOfferType: resetPropertyOfferType
           ? null
           : (propertyOfferType ?? this.propertyOfferType),
+      propertyFurnishing: resetPropertyFurnishing
+          ? null
+          : (propertyFurnishing ?? this.propertyFurnishing),
       condition: resetCondition ? null : (condition ?? this.condition),
       publicationDate: publicationDate ?? this.publicationDate,
       category: resetCategory ? null : (category ?? this.category),
+      minArea: resetMinArea ? null : (minArea ?? this.minArea),
+      maxArea: resetMaxArea ? null : (maxArea ?? this.maxArea),
+      minBedrooms: resetMinBedrooms ? null : (minBedrooms ?? this.minBedrooms),
+      minBathrooms:
+          resetMinBathrooms ? null : (minBathrooms ?? this.minBathrooms),
+      minParkingSpots: resetMinParkingSpots
+          ? null
+          : (minParkingSpots ?? this.minParkingSpots),
       minYear: resetMinYear ? null : (minYear ?? this.minYear),
       maxYear: resetMaxYear ? null : (maxYear ?? this.maxYear),
       manufacturer:
           resetManufacturer ? null : (manufacturer ?? this.manufacturer),
       fuelType: resetFuelType ? null : (fuelType ?? this.fuelType),
+      vehicleColor:
+          resetVehicleColor ? null : (vehicleColor ?? this.vehicleColor),
       maxKm: resetMaxKm ? null : (maxKm ?? this.maxKm),
       transmission:
           resetTransmission ? null : (transmission ?? this.transmission),
       vehicleFeatures: vehicleFeatures ?? this.vehicleFeatures,
+      customAttributeFilters: resetCustomAttributeFilters
+          ? const {}
+          : (customAttributeFilters ?? this.customAttributeFilters),
     );
   }
 
@@ -109,9 +170,35 @@ extension MarketplaceFiltersMatching on MarketplaceFilters {
       return false;
     }
 
+    if (categoryType != null && categoryType!.trim().isNotEmpty) {
+      final normalizedFilter = AdModel.normalizeValue(categoryType!);
+      final normalizedAdCategoryType = AdModel.normalizeValue(
+        ad.categoryType?.trim() ?? '',
+      );
+      final normalizedAdDisplayCategoryType = AdModel.normalizeValue(
+        ad.displayCategoryTypeLabel,
+      );
+      if (normalizedAdCategoryType != normalizedFilter &&
+          normalizedAdDisplayCategoryType != normalizedFilter) {
+        return false;
+      }
+    }
+
+    if (servicePriceType != null &&
+        servicePriceType!.isNotEmpty &&
+        ad.servicePriceType != servicePriceType) {
+      return false;
+    }
+
     if (propertyOfferType != null &&
         propertyOfferType!.isNotEmpty &&
         ad.propertyOfferType != propertyOfferType) {
+      return false;
+    }
+
+    if (propertyFurnishing != null &&
+        propertyFurnishing!.isNotEmpty &&
+        ad.propertyFurnishing != propertyFurnishing) {
       return false;
     }
 
@@ -147,6 +234,33 @@ extension MarketplaceFiltersMatching on MarketplaceFilters {
       return false;
     }
 
+    if (minArea != null &&
+        (ad.propertyArea == null || ad.propertyArea! < minArea!)) {
+      return false;
+    }
+
+    if (maxArea != null &&
+        (ad.propertyArea == null || ad.propertyArea! > maxArea!)) {
+      return false;
+    }
+
+    if (minBedrooms != null &&
+        (ad.propertyBedrooms == null || ad.propertyBedrooms! < minBedrooms!)) {
+      return false;
+    }
+
+    if (minBathrooms != null &&
+        (ad.propertyBathrooms == null ||
+            ad.propertyBathrooms! < minBathrooms!)) {
+      return false;
+    }
+
+    if (minParkingSpots != null &&
+        (ad.propertyParkingSpots == null ||
+            ad.propertyParkingSpots! < minParkingSpots!)) {
+      return false;
+    }
+
     if (manufacturer != null &&
         manufacturer!.trim().isNotEmpty &&
         AdModel.normalizeValue(ad.vehicleBrand ?? '') !=
@@ -161,6 +275,13 @@ extension MarketplaceFiltersMatching on MarketplaceFilters {
       return false;
     }
 
+    if (vehicleColor != null &&
+        vehicleColor!.trim().isNotEmpty &&
+        AdModel.normalizeValue(ad.vehicleColor ?? '') !=
+            AdModel.normalizeValue(vehicleColor!)) {
+      return false;
+    }
+
     if (maxKm != null && ad.km != null && ad.km! > maxKm!) {
       return false;
     }
@@ -171,6 +292,26 @@ extension MarketplaceFiltersMatching on MarketplaceFilters {
       final requiredFeatures = vehicleFeatures.map(AdModel.normalizeValue);
       if (!requiredFeatures.every(adFeatures.contains)) {
         return false;
+      }
+    }
+
+    if (customAttributeFilters.isNotEmpty) {
+      final adAttributes = <String, String>{};
+      for (final attribute in ad.customAttributes) {
+        final key = AdModel.normalizeValue(attribute.key);
+        final value = AdModel.normalizeValue(attribute.value);
+        if (key.isNotEmpty && value.isNotEmpty) {
+          adAttributes[key] = value;
+        }
+      }
+
+      for (final entry in customAttributeFilters.entries) {
+        final filterKey = AdModel.normalizeValue(entry.key);
+        final filterValue = AdModel.normalizeValue(entry.value);
+        if (filterKey.isEmpty || filterValue.isEmpty) continue;
+        if (adAttributes[filterKey] != filterValue) {
+          return false;
+        }
       }
     }
 

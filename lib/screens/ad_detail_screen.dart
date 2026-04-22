@@ -80,9 +80,10 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
       adTitle: widget.ad.title,
       buyerName: user.fullName,
       buyerPhoto: user.profilePhoto ?? '',
-      sellerName: widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
-          ? widget.ad.displaySellerUserName
-          : widget.ad.displaySellerName,
+      sellerName:
+          widget.ad.isStoreAd && widget.ad.displaySellerUserName.isNotEmpty
+              ? widget.ad.displaySellerUserName
+              : widget.ad.displaySellerName,
       sellerPhoto: widget.ad.displaySellerAvatar,
     );
   }

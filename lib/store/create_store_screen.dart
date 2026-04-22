@@ -694,7 +694,7 @@ class _StoreStep2 extends StatelessWidget {
                             color: AppTheme.facebookBlue, size: 32),
                         const SizedBox(height: 6),
                         Text(
-                          'Adicionar\nlogo',
+                          'Abrir galeria\npara a logo',
                           style: GoogleFonts.roboto(
                             color: Colors.grey,
                             fontSize: 11,
@@ -750,7 +750,7 @@ class _StoreStep2 extends StatelessWidget {
                             color: AppTheme.facebookBlue, size: 40),
                         const SizedBox(height: 8),
                         Text(
-                          'Adicionar banner (recomendado: 1200x400)',
+                          'Abrir galeria e recortar banner',
                           style: GoogleFonts.roboto(
                             color: Colors.grey,
                             fontSize: 12,

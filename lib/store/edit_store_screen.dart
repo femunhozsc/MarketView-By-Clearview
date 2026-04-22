@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -10,7 +11,6 @@ import '../models/user_model.dart';
 import '../providers/user_provider.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'create_store_screen.dart';
 
@@ -32,7 +32,6 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
   final _formKey = GlobalKey<FormState>();
   final _firestore = FirestoreService();
   final _cloudinary = CloudinaryService();
-  final _storage = StorageService();
 
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descriptionCtrl;
@@ -124,14 +123,11 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
       return cloudinaryUrl;
     }
 
-    final firebaseUrl = isLogo
-        ? await _storage.uploadStoreLogo(widget.store.id, file)
-        : await _storage.uploadStoreBanner(widget.store.id, file);
-    if (firebaseUrl != null && firebaseUrl.trim().isNotEmpty) {
-      return firebaseUrl;
-    }
-
-    return null;
+    throw Exception(
+      isLogo
+          ? 'Nao foi possivel enviar a logomarca para o Cloudinary.'
+          : 'Nao foi possivel enviar o banner para o Cloudinary.',
+    );
   }
 
   Future<void> _save() async {
@@ -142,14 +138,6 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
       final logoUrl = await _uploadStoreImage(file: _newLogoFile, isLogo: true);
       final bannerUrl =
           await _uploadStoreImage(file: _newBannerFile, isLogo: false);
-      final failedUploads = <String>[
-        if (_newLogoFile != null && (logoUrl == null || logoUrl.trim().isEmpty))
-          'logomarca',
-        if (_newBannerFile != null &&
-            (bannerUrl == null || bannerUrl.trim().isEmpty))
-          'banner',
-      ];
-
       final updates = <String, dynamic>{
         'name': _nameCtrl.text.trim(),
         'category': _category,
@@ -187,17 +175,20 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
       if (!mounted) return;
       context.read<UserProvider>().notifyMarketplaceChanged();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            failedUploads.isEmpty
-                ? 'Loja atualizada com sucesso!'
-                : 'Loja atualizada, mas houve falha ao salvar: ${failedUploads.join(' e ')}.',
-          ),
-          backgroundColor:
-              failedUploads.isEmpty ? AppTheme.success : AppTheme.error,
+        const SnackBar(
+          content: Text('Loja atualizada com sucesso!'),
+          backgroundColor: AppTheme.success,
         ),
       );
       Navigator.pop(context, refreshedStore);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      final message = e.code == 'permission-denied'
+          ? 'O Firestore bloqueou a atualizacao da loja.'
+          : 'Erro do Firestore ao salvar a loja: ${e.message ?? e.code}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -356,7 +347,7 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Toque no banner ou na logo para trocar as imagens da loja.',
+                          'Toque no banner ou na logo para abrir a galeria e ajustar o corte antes de salvar.',
                           style: GoogleFonts.roboto(
                             color: subColor,
                             height: 1.4,

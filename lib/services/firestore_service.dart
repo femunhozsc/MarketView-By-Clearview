@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../models/community_post_model.dart';
 import '../models/user_model.dart';
 import '../models/store_model.dart';
 import '../models/ad_model.dart';
@@ -148,6 +149,20 @@ class FirestoreService {
           entityType: 'user',
           entityId: uid,
           assetUrl: profilePhoto,
+        );
+      }
+    }
+
+    final bannerPhoto = user.bannerPhoto;
+    if (bannerPhoto != null && bannerPhoto.trim().isNotEmpty) {
+      final deletedFromCloudinary =
+          await _cloudinary.deleteImageByUrl(bannerPhoto);
+      if (!deletedFromCloudinary &&
+          !await _storage.deleteFileByUrl(bannerPhoto)) {
+        await _queueCleanupFailure(
+          entityType: 'user',
+          entityId: uid,
+          assetUrl: bannerPhoto,
         );
       }
     }
@@ -487,7 +502,8 @@ class FirestoreService {
           if (firstName.startsWith(normalizedQuery)) score += 110;
           if (lastName.startsWith(normalizedQuery)) score += 90;
           if (fullName.contains(normalizedQuery)) score += 100;
-          if (city.contains(normalizedQuery) || state.contains(normalizedQuery)) {
+          if (city.contains(normalizedQuery) ||
+              state.contains(normalizedQuery)) {
             score += 28;
           }
 
@@ -586,8 +602,7 @@ class FirestoreService {
         final ratingCompare = b.key.rating.compareTo(a.key.rating);
         if (ratingCompare != 0) return ratingCompare;
 
-        final reviewsCompare =
-            b.key.totalReviews.compareTo(a.key.totalReviews);
+        final reviewsCompare = b.key.totalReviews.compareTo(a.key.totalReviews);
         if (reviewsCompare != 0) return reviewsCompare;
 
         return b.key.createdAt.compareTo(a.key.createdAt);
@@ -627,7 +642,8 @@ class FirestoreService {
 
         final title = AdModel.normalizeValue(ad.title);
         final category = AdModel.normalizeValue(ad.category);
-        final categoryType = AdModel.normalizeValue(ad.displayCategoryTypeLabel);
+        final categoryType =
+            AdModel.normalizeValue(ad.displayCategoryTypeLabel);
         final description = AdModel.normalizeValue(ad.description);
         final sellerName = AdModel.normalizeValue(ad.sellerName);
         final storeName = AdModel.normalizeValue(ad.storeName ?? '');
@@ -658,7 +674,8 @@ class FirestoreService {
         for (final attribute in ad.customAttributes) {
           final label = AdModel.normalizeValue(attribute.label);
           final value = AdModel.normalizeValue(attribute.value);
-          if (label.contains(normalizedQuery) || value.contains(normalizedQuery)) {
+          if (label.contains(normalizedQuery) ||
+              value.contains(normalizedQuery)) {
             score += 10;
           }
         }
@@ -846,6 +863,125 @@ class FirestoreService {
       debugPrint('getStoresForUser falhou: $e');
       return [];
     }
+  }
+
+  Stream<List<CommunityPostModel>> streamCommunityPosts({int limit = 60}) {
+    return _firestore
+        .collection('community_posts')
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => CommunityPostModel.fromMap(doc.data()))
+              .toList(growable: false),
+        );
+  }
+
+  Stream<List<CommunityCommentModel>> streamCommunityComments(String postId) {
+    if (postId.trim().isEmpty) {
+      return const Stream<List<CommunityCommentModel>>.empty();
+    }
+
+    return _firestore
+        .collection('community_posts')
+        .doc(postId)
+        .collection('comments')
+        .orderBy('createdAt')
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => CommunityCommentModel.fromMap(doc.data()))
+              .toList(growable: false),
+        );
+  }
+
+  Future<void> createCommunityPost(CommunityPostModel post) async {
+    await _firestore
+        .collection('community_posts')
+        .doc(post.id)
+        .set(post.toMap(), SetOptions(merge: true));
+  }
+
+  Future<void> toggleCommunityPostLike({
+    required String postId,
+    required String userId,
+  }) async {
+    if (postId.trim().isEmpty || userId.trim().isEmpty) return;
+
+    final postRef = _firestore.collection('community_posts').doc(postId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(postRef);
+      if (!snapshot.exists) return;
+
+      final data = snapshot.data() as Map<String, dynamic>;
+      final likeUserIds =
+          List<String>.from(data['likeUserIds'] ?? const <String>[]);
+      final alreadyLiked = likeUserIds.contains(userId);
+
+      if (alreadyLiked) {
+        likeUserIds.remove(userId);
+      } else {
+        likeUserIds.add(userId);
+      }
+
+      transaction.update(postRef, {
+        'likeUserIds': likeUserIds,
+        'likeCount': likeUserIds.length,
+      });
+    });
+  }
+
+  Future<void> addCommunityComment(CommunityCommentModel comment) async {
+    if (comment.postId.trim().isEmpty || comment.id.trim().isEmpty) return;
+
+    final postRef =
+        _firestore.collection('community_posts').doc(comment.postId);
+    final commentRef = postRef.collection('comments').doc(comment.id);
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(postRef);
+      if (!snapshot.exists) {
+        throw Exception('Publicacao nao encontrada.');
+      }
+
+      final data = snapshot.data() as Map<String, dynamic>;
+      final currentCount = (data['commentCount'] as num?)?.toInt() ?? 0;
+
+      transaction.set(commentRef, comment.toMap());
+      transaction.update(postRef, {
+        'commentCount': currentCount + 1,
+      });
+    });
+  }
+
+  Future<void> deleteCommunityPost(String postId) async {
+    if (postId.trim().isEmpty) return;
+
+    final postRef = _firestore.collection('community_posts').doc(postId);
+    final snapshot = await postRef.get();
+    if (!snapshot.exists) return;
+
+    final post = CommunityPostModel.fromMap(snapshot.data()!);
+    if (post.imageUrl?.trim().isNotEmpty ?? false) {
+      final imageUrl = post.imageUrl!.trim();
+      final deletedFromCloudinary =
+          await _cloudinary.deleteImageByUrl(imageUrl);
+      if (!deletedFromCloudinary && !await _storage.deleteFileByUrl(imageUrl)) {
+        await _queueCleanupFailure(
+          entityType: 'community_post',
+          entityId: postId,
+          assetUrl: imageUrl,
+        );
+      }
+    }
+
+    final comments = await postRef.collection('comments').get();
+    for (final doc in comments.docs) {
+      await doc.reference.delete();
+    }
+
+    await postRef.delete();
   }
 
   Future<StoreAccessInvite> generateStoreInvite({
@@ -1689,10 +1825,13 @@ class FirestoreService {
           .toList(growable: false);
       if (readBy.contains(readerId)) continue;
 
-      batch.set(doc.reference, {
-        'readBy': FieldValue.arrayUnion([readerId]),
-        'readAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      batch.set(
+          doc.reference,
+          {
+            'readBy': FieldValue.arrayUnion([readerId]),
+            'readAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true));
       hasUpdates = true;
     }
 

@@ -39,6 +39,33 @@ const List<String> _promoBannerAssets = [
   'assets/images/banner_ad_5.png',
 ];
 
+List<String> _resolvePromoBannerSources(Map<String, dynamic>? data) {
+  final resolved = <String>[];
+  final bannerMap = data?['banners'];
+  final normalizedBannerMap = bannerMap is Map
+      ? Map<String, dynamic>.from(bannerMap)
+      : const <String, dynamic>{};
+
+  for (var index = 0; index < _promoBannerAssets.length; index++) {
+    final slot = index + 1;
+    final directUrl = (data?['banner${slot}Url'] ?? '').toString().trim();
+    final nestedBanner = normalizedBannerMap['$slot'] is Map<String, dynamic>
+        ? normalizedBannerMap['$slot'] as Map<String, dynamic>
+        : normalizedBannerMap['$slot'] is Map
+            ? Map<String, dynamic>.from(normalizedBannerMap['$slot'] as Map)
+            : null;
+    final nestedUrl = (nestedBanner?['imageUrl'] ?? '').toString().trim();
+    final resolvedSource = directUrl.isNotEmpty
+        ? directUrl
+        : nestedUrl.isNotEmpty
+            ? nestedUrl
+            : _promoBannerAssets[index];
+    resolved.add(resolvedSource);
+  }
+
+  return resolved;
+}
+
 String _normalizeLocationValue(String value) => AdModel.normalizeValue(value);
 
 String _baseLocationLabel(String value) {
@@ -408,6 +435,8 @@ class ForYouScreen extends StatefulWidget {
   final Map<String, List<AdModel>> initialCategoryAds;
   final List<String> initialUserCategories;
   final int initialLoadedCategoryIndex;
+  final Map<String, dynamic>? initialGlobalSettings;
+  final Map<String, dynamic>? initialHomeBannerSettings;
   final MarketplaceFilters filters;
   final String locationScope;
   final String locationRegionKey;
@@ -425,6 +454,8 @@ class ForYouScreen extends StatefulWidget {
     this.initialCategoryAds = const {},
     this.initialUserCategories = const [],
     this.initialLoadedCategoryIndex = 0,
+    this.initialGlobalSettings,
+    this.initialHomeBannerSettings,
     this.filters = MarketplaceFilters.empty,
     this.locationScope = 'city',
     this.locationRegionKey = '',
@@ -852,7 +883,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
         : hour >= 12 && hour < 19
             ? 'Boa tarde'
             : 'Boa noite';
-    final headerSubtitle = (user == null || _isNewUser)
+    final defaultHeaderSubtitle = (user == null || _isNewUser)
         ? 'Os anuncios de destaque mais populares na comunidade'
         : 'Separamos esses ultimos anuncios de acordo com seu gosto';
 
@@ -866,54 +897,79 @@ class _ForYouScreenState extends State<ForYouScreen> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 14, 16, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: '$greeting, ',
-                          style: GoogleFonts.montserrat(
-                            fontSize: 27,
-                            height: 1.06,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.8,
-                            color: isDark ? Colors.white : _marketCharcoal,
-                          ),
+              child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('app_config')
+                    .doc('global_settings')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  final settings =
+                      snapshot.data?.data() ?? widget.initialGlobalSettings;
+                  final showPromotionalBanner =
+                      settings?['showPromotionalBanner'] != false;
+                  final welcomeMessage =
+                      (settings?['welcomeMessage'] ?? '').toString().trim();
+                  final headerSubtitle = welcomeMessage.isNotEmpty
+                      ? welcomeMessage
+                      : defaultHeaderSubtitle;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      RichText(
+                        text: TextSpan(
+                          children: [
+                            TextSpan(
+                              text: '$greeting, ',
+                              style: GoogleFonts.montserrat(
+                                fontSize: 27,
+                                height: 1.06,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.8,
+                                color: isDark ? Colors.white : _marketCharcoal,
+                              ),
+                            ),
+                            TextSpan(
+                              text: userName,
+                              style: GoogleFonts.montserrat(
+                                fontSize: 27,
+                                height: 1.06,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.8,
+                                color: marketBlue,
+                              ),
+                            ),
+                          ],
                         ),
-                        TextSpan(
-                          text: userName,
-                          style: GoogleFonts.montserrat(
-                            fontSize: 27,
-                            height: 1.06,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.8,
-                            color: marketBlue,
-                          ),
-                        ),
+                      )
+                          .animate()
+                          .fadeIn(duration: 400.ms)
+                          .slideX(begin: -0.08, end: 0),
+                      if (showPromotionalBanner) ...[
+                        const SizedBox(height: 14),
+                        _HomePromoBanner(
+                          isDark: isDark,
+                          initialBannerSettings:
+                              widget.initialHomeBannerSettings,
+                        )
+                            .animate(delay: 70.ms)
+                            .fadeIn(duration: 420.ms)
+                            .slideY(begin: 0.08, end: 0),
                       ],
-                    ),
-                  )
-                      .animate()
-                      .fadeIn(duration: 400.ms)
-                      .slideX(begin: -0.08, end: 0),
-                  const SizedBox(height: 14),
-                  _HomePromoBanner(isDark: isDark)
-                      .animate(delay: 70.ms)
-                      .fadeIn(duration: 420.ms)
-                      .slideY(begin: 0.08, end: 0),
-                  const SizedBox(height: 14),
-                  Text(
-                    headerSubtitle,
-                    style: GoogleFonts.montserrat(
-                      fontSize: 13.5,
-                      height: 1.35,
-                      color: isDark ? AppTheme.whiteSecondary : _marketMuted,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ).animate(delay: 100.ms).fadeIn(duration: 400.ms),
-                ],
+                      const SizedBox(height: 14),
+                      Text(
+                        headerSubtitle,
+                        style: GoogleFonts.montserrat(
+                          fontSize: 13.5,
+                          height: 1.35,
+                          color:
+                              isDark ? AppTheme.whiteSecondary : _marketMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ).animate(delay: 100.ms).fadeIn(duration: 400.ms),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -1489,9 +1545,13 @@ class _ForYouScreenState extends State<ForYouScreen> {
 }
 
 class _HomePromoBanner extends StatefulWidget {
-  const _HomePromoBanner({required this.isDark});
+  const _HomePromoBanner({
+    required this.isDark,
+    this.initialBannerSettings,
+  });
 
   final bool isDark;
+  final Map<String, dynamic>? initialBannerSettings;
 
   @override
   State<_HomePromoBanner> createState() => _HomePromoBannerState();
@@ -1521,83 +1581,110 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
         ? Colors.black.withValues(alpha: 0.2)
         : const Color(0xFF0F172A).withValues(alpha: 0.08);
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: borderColor),
-        boxShadow: [
-          BoxShadow(
-            color: shadowColor,
-            blurRadius: 22,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: AspectRatio(
-          aspectRatio: 16 / 6,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              PageView.builder(
-                controller: _pageController,
-                itemCount: _promoBannerAssets.length,
-                onPageChanged: (index) {
-                  if (!mounted) return;
-                  setState(() => _currentPage = index);
-                },
-                itemBuilder: (context, index) {
-                  return Image.asset(
-                    _promoBannerAssets[index],
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: widget.isDark
-                          ? const Color(0xFF131922)
-                          : const Color(0xFFF3F6FA),
-                      alignment: Alignment.center,
-                      child: Text(
-                        'Banner ${index + 1}',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: widget.isDark
-                              ? Colors.white70
-                              : const Color(0xFF334155),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 12,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(_promoBannerAssets.length, (index) {
-                    final selected = index == _currentPage;
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      width: selected ? 18 : 7,
-                      height: 7,
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? Colors.white
-                            : Colors.white.withValues(alpha: 0.46),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    );
-                  }),
-                ),
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('app_config')
+          .doc('home_banners')
+          .snapshots(),
+      builder: (context, snapshot) {
+        final bannerSources = _resolvePromoBannerSources(
+          snapshot.data?.data() ?? widget.initialBannerSettings,
+        );
+
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: shadowColor,
+                blurRadius: 22,
+                offset: const Offset(0, 12),
               ),
             ],
           ),
-        ),
-      ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: AspectRatio(
+              aspectRatio: 16 / 6,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  PageView.builder(
+                    controller: _pageController,
+                    itemCount: bannerSources.length,
+                    onPageChanged: (index) {
+                      if (!mounted) return;
+                      setState(() => _currentPage = index);
+                    },
+                    itemBuilder: (context, index) {
+                      final source = bannerSources[index];
+                      final placeholder = Container(
+                        color: widget.isDark
+                            ? const Color(0xFF131922)
+                            : const Color(0xFFF3F6FA),
+                        alignment: Alignment.center,
+                        child: Text(
+                          'Banner ${index + 1}',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: widget.isDark
+                                ? Colors.white70
+                                : const Color(0xFF334155),
+                          ),
+                        ),
+                      );
+
+                      if (source.startsWith('http')) {
+                        return Image.network(
+                          source,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => placeholder,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return placeholder;
+                          },
+                        );
+                      }
+
+                      return Image.asset(
+                        source,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => placeholder,
+                      );
+                    },
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 12,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(bannerSources.length, (index) {
+                        final selected = index == _currentPage;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          width: selected ? 18 : 7,
+                          height: 7,
+                          margin: const EdgeInsets.symmetric(horizontal: 3),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? Colors.white
+                                : Colors.white.withValues(alpha: 0.46),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -27,6 +27,7 @@ class _PillSectionsState extends State<PillSections> {
   List<String> _getSections(bool isNewUser) {
     return [
       isNewUser ? 'Recomendados' : 'Para voc\u00EA',
+      'Comunidade',
       'Produtos',
       'Servi\u00E7os',
       'Lojas',
@@ -39,7 +40,7 @@ class _PillSectionsState extends State<PillSections> {
   @override
   void initState() {
     super.initState();
-    _itemKeys = List.generate(7, (_) => GlobalKey());
+    _itemKeys = List.generate(8, (_) => GlobalKey());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ensureSelectedVisible(animated: false);
     });

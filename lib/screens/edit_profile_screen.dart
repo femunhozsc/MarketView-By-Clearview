@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -10,7 +11,6 @@ import '../providers/user_provider.dart';
 import '../services/cep_service.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -25,7 +25,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _cloudinary = CloudinaryService();
   final _firestoreService = FirestoreService();
   final _cepService = CepService();
-  final _storage = StorageService();
 
   final _firstNameCtrl = TextEditingController();
   final _lastNameCtrl = TextEditingController();
@@ -39,6 +38,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _stateCtrl = TextEditingController();
 
   File? _newPhoto;
+  File? _newBanner;
   bool _saving = false;
   bool _fetchingCep = false;
   bool _didSeed = false;
@@ -95,6 +95,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _pickBanner() async {
+    final file = await _cloudinary.pickAndCropImage(
+      context: context,
+      aspectRatio: const CropAspectRatio(ratioX: 3, ratioY: 1),
+      title: 'Recortar banner do perfil',
+    );
+    if (file != null && mounted) {
+      setState(() => _newBanner = file);
+    }
+  }
+
   Future<void> _fetchCep() async {
     final cep = _cepCtrl.text.trim();
     if (cep.replaceAll(RegExp(r'\D'), '').length < 8) return;
@@ -134,9 +145,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     try {
       String? photoUrl = user.profilePhoto;
+      String? bannerUrl = user.bannerPhoto;
       if (_newPhoto != null) {
         photoUrl = await _cloudinary.uploadProfilePhoto(user.uid, _newPhoto!);
-        photoUrl ??= await _storage.uploadProfilePhoto(user.uid, _newPhoto!);
+        if (photoUrl == null || photoUrl.trim().isEmpty) {
+          throw Exception(
+            'Nao foi possivel atualizar a foto de perfil no Cloudinary.',
+          );
+        }
+      }
+      if (_newBanner != null) {
+        bannerUrl = await _cloudinary.uploadUserBanner(user.uid, _newBanner!);
+        if (bannerUrl == null || bannerUrl.trim().isEmpty) {
+          throw Exception(
+            'Nao foi possivel atualizar o banner no Cloudinary.',
+          );
+        }
       }
 
       final newAddress = AddressModel(
@@ -155,6 +179,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'lastName': _lastNameCtrl.text.trim(),
         'phone': _phoneCtrl.text.trim(),
         'profilePhoto': photoUrl,
+        'bannerPhoto': bannerUrl,
         'address': newAddress.toMap(),
         'searchRadius': _searchRadius,
       });
@@ -172,6 +197,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
       );
       Navigator.pop(context);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      final message = e.code == 'permission-denied'
+          ? 'O Firestore bloqueou a atualizacao do perfil.'
+          : 'Erro do Firestore ao salvar perfil: ${e.message ?? e.code}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e')),
+      );
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -231,6 +269,42 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
           children: [
+            GestureDetector(
+              onTap: _pickBanner,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  height: 156,
+                  decoration: BoxDecoration(
+                    color:
+                        isDark ? AppTheme.blackLight : const Color(0xFFEFF6FF),
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: _newBanner != null
+                      ? Image.file(_newBanner!, fit: BoxFit.cover)
+                      : (user.bannerPhoto != null &&
+                              user.bannerPhoto!.trim().isNotEmpty)
+                          ? Image.network(
+                              user.bannerPhoto!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => _bannerFallback(),
+                            )
+                          : _bannerFallback(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                'Alterar banner',
+                style: GoogleFonts.roboto(
+                  color: AppTheme.facebookBlue,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
             Center(
               child: GestureDetector(
                 onTap: _pickPhoto,
@@ -494,6 +568,32 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           fontSize: 32,
           fontWeight: FontWeight.w800,
         ),
+      ),
+    );
+  }
+
+  Widget _bannerFallback() {
+    return Container(
+      color: const Color(0xFFEFF6FF),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.panorama_outlined,
+            color: AppTheme.facebookBlue,
+            size: 34,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Toque para escolher e recortar um banner',
+            style: GoogleFonts.roboto(
+              color: AppTheme.facebookBlue,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

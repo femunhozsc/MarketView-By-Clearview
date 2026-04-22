@@ -1,15 +1,18 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
-import 'package:provider/provider.dart';
 import '../models/user_model.dart';
-import '../providers/user_provider.dart';
 import '../services/auth_service.dart';
 import '../services/cep_service.dart';
+import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -35,10 +38,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   int _searchRadius = 50;
   double _mapLat = -15.7801;
   double _mapLng = -47.9292;
+  File? _profilePhotoFile;
+  File? _bannerPhotoFile;
 
   final _authService = AuthService();
   final _firestoreService = FirestoreService();
   final _cepService = CepService();
+  final _cloudinary = CloudinaryService();
+  final _storage = StorageService();
 
   // Máscaras
   final _cpfMask = MaskTextInputFormatter(mask: '###.###.###-##');
@@ -48,7 +55,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _mapController = MapController();
 
   void _nextPage() {
-    if (_currentPage < 3) {
+    if (_currentPage < 4) {
       _pageCtrl.nextPage(
         duration: const Duration(milliseconds: 400),
         curve: Curves.easeInOutCubic,
@@ -96,6 +103,50 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = false);
   }
 
+  Future<void> _pickProfilePhoto() async {
+    final file = await _cloudinary.pickAndCropImage(
+      context: context,
+      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+      title: 'Recortar foto de perfil',
+    );
+    if (file == null || !mounted) return;
+    setState(() => _profilePhotoFile = file);
+  }
+
+  Future<void> _pickBannerPhoto() async {
+    final file = await _cloudinary.pickAndCropImage(
+      context: context,
+      aspectRatio: const CropAspectRatio(ratioX: 3, ratioY: 1),
+      title: 'Recortar banner do perfil',
+    );
+    if (file == null || !mounted) return;
+    setState(() => _bannerPhotoFile = file);
+  }
+
+  Future<String?> _uploadUserImage({
+    required String uid,
+    required File? file,
+    required bool isBanner,
+  }) async {
+    if (file == null) return null;
+
+    final cloudinaryUrl = isBanner
+        ? await _cloudinary.uploadUserBanner(uid, file)
+        : await _cloudinary.uploadProfilePhoto(uid, file);
+    if (cloudinaryUrl != null && cloudinaryUrl.trim().isNotEmpty) {
+      return cloudinaryUrl;
+    }
+
+    final storageUrl = isBanner
+        ? await _storage.uploadUserBanner(uid, file)
+        : await _storage.uploadProfilePhoto(uid, file);
+    if (storageUrl != null && storageUrl.trim().isNotEmpty) {
+      return storageUrl;
+    }
+
+    return null;
+  }
+
   Future<void> _finishRegistration({required bool createStore}) async {
     setState(() => _isLoading = true);
     try {
@@ -110,6 +161,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       await result.user!.updateDisplayName('$_firstName $_lastName'.trim());
 
+      final profilePhotoUrl = await _uploadUserImage(
+        uid: result.user!.uid,
+        file: _profilePhotoFile,
+        isBanner: false,
+      );
+      final bannerPhotoUrl = await _uploadUserImage(
+        uid: result.user!.uid,
+        file: _bannerPhotoFile,
+        isBanner: true,
+      );
+
       final user = UserModel(
         uid: result.user!.uid,
         firstName: _firstName,
@@ -117,6 +179,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         cpf: _cpf,
         email: _email,
         phone: _phone,
+        profilePhoto: profilePhotoUrl,
+        bannerPhoto: bannerPhotoUrl,
         address: _address,
         searchRadius: _searchRadius,
         emailVerificationRequired: true,
@@ -205,7 +269,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             const SizedBox(height: 2),
             Text(
-              'Passo ${_currentPage + 1} de 4',
+              'Passo ${_currentPage + 1} de 5',
               style: GoogleFonts.roboto(
                 color: Colors.grey,
                 fontSize: 12,
@@ -263,6 +327,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           _Step4(
             isDark: isDark,
+            profilePhotoFile: _profilePhotoFile,
+            bannerPhotoFile: _bannerPhotoFile,
+            onPickProfilePhoto: _pickProfilePhoto,
+            onPickBannerPhoto: _pickBannerPhoto,
+            onNext: _nextPage,
+          ),
+          _Step5(
+            isDark: isDark,
             firstName: _firstName,
             isLoading: _isLoading,
             onDecide: (createStore) =>
@@ -277,12 +349,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
-        children: List.generate(4, (i) {
+        children: List.generate(5, (i) {
+          const totalSteps = 5;
           return Expanded(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               height: 4,
-              margin: EdgeInsets.only(right: i < 3 ? 4 : 0),
+              margin: EdgeInsets.only(right: i < totalSteps - 1 ? 4 : 0),
               decoration: BoxDecoration(
                 color: i <= _currentPage
                     ? AppTheme.facebookBlue
@@ -853,14 +926,184 @@ class _Step3State extends State<_Step3> {
   }
 }
 
-// ── PASSO 4 — Criar loja? ──────────────────────────────────────────────────
+// ── PASSO 4 — Foto e banner ────────────────────────────────────────────────
 class _Step4 extends StatelessWidget {
+  const _Step4({
+    required this.isDark,
+    required this.profilePhotoFile,
+    required this.bannerPhotoFile,
+    required this.onPickProfilePhoto,
+    required this.onPickBannerPhoto,
+    required this.onNext,
+  });
+
+  final bool isDark;
+  final File? profilePhotoFile;
+  final File? bannerPhotoFile;
+  final VoidCallback onPickProfilePhoto;
+  final VoidCallback onPickBannerPhoto;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final border = isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
+    final bg = isDark ? AppTheme.blackLight : const Color(0xFFF5F5F5);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          _stepTitle('Seu visual no perfil', isDark).animate().fadeIn(),
+          _stepSubtitle(
+            'Escolha uma foto de perfil e um banner. Voce pode ajustar e cortar as imagens antes de salvar.',
+            isDark,
+          ).animate(delay: 60.ms).fadeIn(),
+          const SizedBox(height: 28),
+          Text(
+            'Banner do perfil',
+            style: GoogleFonts.roboto(
+              color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: onPickBannerPhoto,
+            child: Container(
+              width: double.infinity,
+              height: 160,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: border),
+                image: bannerPhotoFile != null
+                    ? DecorationImage(
+                        image: FileImage(bannerPhotoFile!),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+              ),
+              child: bannerPhotoFile == null
+                  ? Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.panorama_outlined,
+                          color: AppTheme.facebookBlue,
+                          size: 40,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Abrir galeria e recortar banner',
+                          style: GoogleFonts.roboto(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    )
+                  : null,
+            ),
+          ).animate(delay: 110.ms).fadeIn(),
+          const SizedBox(height: 22),
+          Text(
+            'Foto de perfil',
+            style: GoogleFonts.roboto(
+              color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: onPickProfilePhoto,
+            child: Container(
+              width: 118,
+              height: 118,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: border),
+                image: profilePhotoFile != null
+                    ? DecorationImage(
+                        image: FileImage(profilePhotoFile!),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+              ),
+              child: profilePhotoFile == null
+                  ? Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.add_a_photo_outlined,
+                          color: AppTheme.facebookBlue,
+                          size: 30,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Escolher foto',
+                          style: GoogleFonts.roboto(
+                            color: Colors.grey,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    )
+                  : null,
+            ),
+          ).animate(delay: 170.ms).fadeIn(),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTheme.facebookBlue.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info_outline_rounded,
+                  color: AppTheme.facebookBlue,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Essas imagens sao opcionais, mas deixam seu perfil muito mais completo.',
+                    style: GoogleFonts.roboto(
+                      color: AppTheme.facebookBlue,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ).animate(delay: 220.ms).fadeIn(),
+          const SizedBox(height: 40),
+          _nextButton(
+            label: 'Continuar',
+            isDark: isDark,
+            delay: 280,
+            onTap: onNext,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── PASSO 5 — Criar loja? ──────────────────────────────────────────────────
+class _Step5 extends StatelessWidget {
   final bool isDark;
   final String firstName;
   final bool isLoading;
   final Function(bool) onDecide;
 
-  const _Step4({
+  const _Step5({
     required this.isDark,
     required this.firstName,
     required this.isLoading,

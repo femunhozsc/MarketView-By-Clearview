@@ -1,0 +1,202 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwnUser(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isSignedInUser(userId) {
+      return signedIn() && userId is string && userId == request.auth.uid;
+    }
+
+    function storeDoc(storeId) {
+      return get(/databases/$(database)/documents/stores/$(storeId));
+    }
+
+    function storeData(storeId) {
+      return storeDoc(storeId).data;
+    }
+
+    function storeMemberIds(storeId) {
+      return storeExists(storeId) && storeData(storeId).memberUserIds is list
+        ? storeData(storeId).memberUserIds
+        : [];
+    }
+
+    function storeAdminIds(storeId) {
+      return storeExists(storeId) && storeData(storeId).adminUserIds is list
+        ? storeData(storeId).adminUserIds
+        : [];
+    }
+
+    function storeExists(storeId) {
+      return storeId is string &&
+        storeId.size() > 0 &&
+        exists(/databases/$(database)/documents/stores/$(storeId));
+    }
+
+    function canPostAsStore(storeId) {
+      return storeExists(storeId) &&
+        (
+          storeData(storeId).ownerId == request.auth.uid ||
+          request.auth.uid in storeMemberIds(storeId) ||
+          request.auth.uid in storeAdminIds(storeId)
+        );
+    }
+
+    function canCreateCommunityPost(postId) {
+      return signedIn() &&
+        request.resource.data.id == postId &&
+        request.resource.data.authorType is string &&
+        request.resource.data.authorId is string &&
+        request.resource.data.content is string &&
+        request.resource.data.content.size() > 0 &&
+        (
+          (
+            request.resource.data.authorType == 'user' &&
+            request.resource.data.authorId == request.auth.uid
+          ) ||
+          (
+            request.resource.data.authorType == 'store' &&
+            canPostAsStore(request.resource.data.storeId)
+          )
+        );
+    }
+
+    function isCommunityAuthor(resourceData) {
+      return (
+        resourceData.authorType == 'user' &&
+        isSignedInUser(resourceData.authorId)
+      ) || (
+        resourceData.authorType == 'store' &&
+        canPostAsStore(resourceData.storeId)
+      );
+    }
+
+    function unchangedCommunityPostFields() {
+      return request.resource.data.id == resource.data.id &&
+        request.resource.data.authorId == resource.data.authorId &&
+        request.resource.data.authorType == resource.data.authorType &&
+        request.resource.data.authorName == resource.data.authorName &&
+        request.resource.data.authorAvatar == resource.data.authorAvatar &&
+        request.resource.data.authorSubtitle == resource.data.authorSubtitle &&
+        request.resource.data.content == resource.data.content &&
+        request.resource.data.type == resource.data.type &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.imageUrl == resource.data.imageUrl &&
+        request.resource.data.imageLabel == resource.data.imageLabel &&
+        request.resource.data.storeId == resource.data.storeId &&
+        request.resource.data.authorVerified == resource.data.authorVerified &&
+        request.resource.data.authorOfficial == resource.data.authorOfficial;
+    }
+
+    function isLikeToggleUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'likeUserIds',
+          'likeCount',
+        ]) &&
+        unchangedCommunityPostFields() &&
+        request.resource.data.commentCount == resource.data.commentCount &&
+        request.resource.data.likeUserIds is list &&
+        request.resource.data.likeCount is int &&
+        request.resource.data.likeCount == request.resource.data.likeUserIds.size() &&
+        (
+          (
+            !(request.auth.uid in resource.data.likeUserIds) &&
+            request.auth.uid in request.resource.data.likeUserIds &&
+            request.resource.data.likeUserIds.size() ==
+              resource.data.likeUserIds.size() + 1
+          ) ||
+          (
+            request.auth.uid in resource.data.likeUserIds &&
+            !(request.auth.uid in request.resource.data.likeUserIds) &&
+            request.resource.data.likeUserIds.size() ==
+              resource.data.likeUserIds.size() - 1
+          )
+        );
+    }
+
+    function isCommentCountIncrement() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'commentCount',
+        ]) &&
+        unchangedCommunityPostFields() &&
+        request.resource.data.likeUserIds == resource.data.likeUserIds &&
+        request.resource.data.likeCount == resource.data.likeCount &&
+        request.resource.data.commentCount is int &&
+        request.resource.data.commentCount == resource.data.commentCount + 1;
+    }
+
+    function canUpdateCommunityPost() {
+      return signedIn() && (
+        isLikeToggleUpdate() ||
+        isCommentCountIncrement()
+      );
+    }
+
+    function canDeleteCommunityPost() {
+      return signedIn() && isCommunityAuthor(resource.data);
+    }
+
+    match /users/{userId} {
+      allow read, create, update, delete: if isOwnUser(userId);
+    }
+
+    match /ads/{adId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /stores/{storeId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /review_requests/{requestId} {
+      allow read, create, update, delete: if true;
+    }
+
+    match /chats/{chatId} {
+      allow read, create, update, delete: if true;
+
+      match /messages/{messageId} {
+        allow read, create, update, delete: if true;
+      }
+    }
+
+    match /maintenance_cleanup_queue/{docId} {
+      allow read, create, update, delete: if true;
+    }
+
+    match /app_config/{docId} {
+      allow read, create, update, delete: if true;
+    }
+
+    match /community_posts/{postId} {
+      allow read: if true;
+      allow create: if canCreateCommunityPost(postId);
+      allow update: if canUpdateCommunityPost();
+      allow delete: if canDeleteCommunityPost();
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if signedIn()
+          && request.resource.data.id == commentId
+          && request.resource.data.postId == postId
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.message is string
+          && request.resource.data.message.size() > 0;
+        allow update, delete: if false;
+      }
+    }
+  }
+}
