@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'dart:math' as math;
 import '../models/community_post_model.dart';
 import '../models/user_model.dart';
@@ -1984,6 +1985,9 @@ class FirestoreService {
     required String preview,
   }) async {
     final chatRef = _firestore.collection('chats').doc(chatId);
+    final chatSnapshot = await chatRef.get();
+    final chatData = chatSnapshot.data() ?? const <String, dynamic>{};
+    final participantIds = _chatParticipantIds(chatData, payload);
     final batch = _firestore.batch();
 
     final msgRef = chatRef.collection('messages').doc();
@@ -2006,9 +2010,56 @@ class FirestoreService {
       if ((payload['buyerPhoto'] as String? ?? '').trim().isNotEmpty)
         'lastSenderPhoto': (payload['buyerPhoto'] as String).trim(),
     };
+    if (_shouldBackfillChatParticipants(chatData, participantIds)) {
+      chatPatch['participants'] = participantIds;
+    }
     batch.set(chatRef, chatPatch, SetOptions(merge: true));
 
     await batch.commit();
+  }
+
+  List<String> _chatParticipantIds(
+    Map<String, dynamic> chatData,
+    Map<String, dynamic> payload,
+  ) {
+    final ids = <String>{};
+
+    void addId(dynamic value) {
+      final id = (value as String? ?? '').trim();
+      if (id.isNotEmpty) ids.add(id);
+    }
+
+    final existingParticipants = chatData['participants'];
+    if (existingParticipants is List<dynamic>) {
+      for (final participant in existingParticipants) {
+        addId(participant);
+      }
+    }
+
+    addId(chatData['buyerId']);
+    addId(chatData['sellerId']);
+    addId(payload['buyerId']);
+    addId(payload['sellerId']);
+    addId(payload['senderId']);
+
+    return ids.toList()..sort();
+  }
+
+  bool _shouldBackfillChatParticipants(
+    Map<String, dynamic> chatData,
+    List<String> participantIds,
+  ) {
+    if (participantIds.length < 2) return false;
+
+    final existingParticipants = chatData['participants'];
+    if (existingParticipants is! List<dynamic>) return true;
+
+    final normalizedExisting = existingParticipants
+        .whereType<String>()
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return !participantIds.every(normalizedExisting.contains);
   }
 
   /// Envia uma mensagem em uma conversa
@@ -2137,20 +2188,113 @@ class FirestoreService {
   }
 
   /// Stream de conversas de um usuário (ordenação local na tela)
-  Stream<QuerySnapshot> getUserChatsStream(String uid) {
-    return _firestore
-        .collection('chats')
-        .where('participants', arrayContains: uid)
-        .snapshots();
+  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getUserChatsStream(
+    String uid,
+  ) {
+    final userId = uid.trim();
+    if (userId.isEmpty) {
+      return Stream.value(
+          const <QueryDocumentSnapshot<Map<String, dynamic>>>[]);
+    }
+
+    late final StreamController<
+        List<QueryDocumentSnapshot<Map<String, dynamic>>>> controller;
+    final chatsById = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+    final queryDocIds = List<Set<String>>.generate(3, (_) => <String>{});
+    final queryFailed = List<bool>.filled(3, false);
+    final subscriptions =
+        <StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>[];
+    var hasAnySnapshot = false;
+
+    void publish() {
+      if (!controller.isClosed) {
+        controller.add(chatsById.values.toList(growable: false));
+      }
+    }
+
+    void handleSnapshot(
+      int queryIndex,
+      QuerySnapshot<Map<String, dynamic>> snapshot,
+    ) {
+      queryFailed[queryIndex] = false;
+      hasAnySnapshot = true;
+      final previousIds = queryDocIds[queryIndex];
+      final currentIds = snapshot.docs.map((doc) => doc.id).toSet();
+      queryDocIds[queryIndex] = currentIds;
+
+      for (final removedId in previousIds.difference(currentIds)) {
+        final stillPresent =
+            queryDocIds.any((idsForQuery) => idsForQuery.contains(removedId));
+        if (!stillPresent) chatsById.remove(removedId);
+      }
+
+      for (final doc in snapshot.docs) {
+        chatsById[doc.id] = doc;
+      }
+
+      publish();
+    }
+
+    void handleError(int queryIndex, Object error, StackTrace stackTrace) {
+      queryFailed[queryIndex] = true;
+      debugPrint('getUserChatsStream($userId) query $queryIndex falhou: $error');
+
+      if (!hasAnySnapshot && queryFailed.every((failed) => failed)) {
+        controller.addError(error, stackTrace);
+      } else {
+        publish();
+      }
+    }
+
+    controller =
+        StreamController<List<QueryDocumentSnapshot<Map<String, dynamic>>>>(
+      onListen: () {
+        final chatsRef = _firestore.collection('chats');
+        final queries = [
+          chatsRef.where('participants', arrayContains: userId),
+          chatsRef.where('buyerId', isEqualTo: userId),
+          chatsRef.where('sellerId', isEqualTo: userId),
+        ];
+
+        for (var i = 0; i < queries.length; i++) {
+          subscriptions.add(
+            queries[i].snapshots().listen(
+                  (snapshot) => handleSnapshot(i, snapshot),
+                  onError: (Object error, StackTrace stackTrace) =>
+                      handleError(i, error, stackTrace),
+                ),
+          );
+        }
+      },
+      onCancel: () async {
+        for (final subscription in subscriptions) {
+          await subscription.cancel();
+        }
+      },
+    );
+
+    return controller.stream;
   }
 
   Future<void> _deleteChatsForUser(String uid) async {
-    final snapshot = await _firestore
-        .collection('chats')
-        .where('participants', arrayContains: uid)
-        .get();
-    for (final chatDoc in snapshot.docs) {
-      await _deleteChat(chatDoc.reference);
+    final userId = uid.trim();
+    if (userId.isEmpty) return;
+
+    final chatsRef = _firestore.collection('chats');
+    final snapshots = await Future.wait([
+      chatsRef.where('participants', arrayContains: userId).get(),
+      chatsRef.where('buyerId', isEqualTo: userId).get(),
+      chatsRef.where('sellerId', isEqualTo: userId).get(),
+    ]);
+    final chatRefs = <String, DocumentReference>{};
+    for (final snapshot in snapshots) {
+      for (final chatDoc in snapshot.docs) {
+        chatRefs[chatDoc.id] = chatDoc.reference;
+      }
+    }
+
+    for (final chatRef in chatRefs.values) {
+      await _deleteChat(chatRef);
     }
   }
 

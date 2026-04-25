@@ -221,12 +221,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 (request['chatId'] as String).trim(): request,
           };
 
-          return StreamBuilder<QuerySnapshot>(
+          return StreamBuilder<
+              List<QueryDocumentSnapshot<Map<String, dynamic>>>>(
             stream: _firestore.getUserChatsStream(user.uid),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
-                  child: CircularProgressIndicator(color: AppTheme.facebookBlue),
+                  child:
+                      CircularProgressIndicator(color: AppTheme.facebookBlue),
                 );
               }
 
@@ -239,29 +241,31 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
               }
 
-              final docs = snapshot.data?.docs ?? [];
-              final sortedDocs = List<QueryDocumentSnapshot>.from(docs)
-                ..sort((a, b) {
-                  final aNeedsReview = pendingByChatId.containsKey(a.id);
-                  final bNeedsReview = pendingByChatId.containsKey(b.id);
-                  if (aNeedsReview != bNeedsReview) {
-                    return aNeedsReview ? -1 : 1;
-                  }
+              final docs = snapshot.data ??
+                  const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+              final sortedDocs =
+                  List<QueryDocumentSnapshot<Map<String, dynamic>>>.from(docs)
+                    ..sort((a, b) {
+                      final aNeedsReview = pendingByChatId.containsKey(a.id);
+                      final bNeedsReview = pendingByChatId.containsKey(b.id);
+                      if (aNeedsReview != bNeedsReview) {
+                        return aNeedsReview ? -1 : 1;
+                      }
 
-                  final aPinned = user.pinnedChatIds.contains(a.id);
-                  final bPinned = user.pinnedChatIds.contains(b.id);
-                  if (aPinned != bPinned) return aPinned ? -1 : 1;
+                      final aPinned = user.pinnedChatIds.contains(a.id);
+                      final bPinned = user.pinnedChatIds.contains(b.id);
+                      if (aPinned != bPinned) return aPinned ? -1 : 1;
 
-                  final aData = a.data() as Map<String, dynamic>;
-                  final bData = b.data() as Map<String, dynamic>;
-                  final aTime =
-                      (aData['lastMessageTime'] as Timestamp?)?.toDate() ??
-                          DateTime(2000);
-                  final bTime =
-                      (bData['lastMessageTime'] as Timestamp?)?.toDate() ??
-                          DateTime(2000);
-                  return bTime.compareTo(aTime);
-                });
+                      final aData = a.data();
+                      final bData = b.data();
+                      final aTime =
+                          (aData['lastMessageTime'] as Timestamp?)?.toDate() ??
+                              DateTime(2000);
+                      final bTime =
+                          (bData['lastMessageTime'] as Timestamp?)?.toDate() ??
+                              DateTime(2000);
+                      return bTime.compareTo(aTime);
+                    });
 
               if (sortedDocs.isEmpty) {
                 return _buildEmptyState(mutedColor);
@@ -273,7 +277,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 separatorBuilder: (context, index) =>
                     Divider(height: 1, color: border, indent: 80),
                 itemBuilder: (context, index) {
-                  final data = sortedDocs[index].data() as Map<String, dynamic>;
+                  final data = sortedDocs[index].data();
                   final chatId = sortedDocs[index].id;
                   final lastMessage = data['lastMessage'] ?? '';
                   final lastTime =
@@ -285,23 +289,24 @@ class _ChatScreenState extends State<ChatScreen> {
                   final needsReview = pendingByChatId.containsKey(chatId);
 
                   final isBuyer = data['buyerId'] == user.uid;
-                  final otherId =
-                      isBuyer ? (data['sellerId'] ?? '') : (data['buyerId'] ?? '');
+                  final otherId = isBuyer
+                      ? (data['sellerId'] ?? '')
+                      : (data['buyerId'] ?? '');
 
                   if (otherId.isEmpty) return const SizedBox.shrink();
 
                   final fallbackOtherName = ((isBuyer
-                                  ? data['sellerName']
-                                  : data['buyerName']) as String? ??
-                              '')
-                          .trim();
+                              ? data['sellerName']
+                              : data['buyerName']) as String? ??
+                          '')
+                      .trim();
                   final lastSenderName =
                       ((data['lastSenderName'] as String? ?? '')).trim();
                   final fallbackProfilePhoto = ((isBuyer
-                                  ? data['sellerPhoto']
-                                  : data['buyerPhoto']) as String? ??
-                              '')
-                          .trim();
+                              ? data['sellerPhoto']
+                              : data['buyerPhoto']) as String? ??
+                          '')
+                      .trim();
                   final lastSenderPhoto =
                       ((data['lastSenderPhoto'] as String? ?? '')).trim();
 
@@ -350,36 +355,41 @@ class _ChatScreenState extends State<ChatScreen> {
                       }
 
                       final adSnapshot = userSnap.data;
-                      final adData = adSnapshot?.data() as Map<String, dynamic>?;
+                      final adData =
+                          adSnapshot?.data() as Map<String, dynamic>?;
                       final adTitle = (data['adTitle'] as String? ?? '').trim();
                       final adImages =
                           (adData?['images'] as List<dynamic>? ?? const [])
                               .whereType<String>()
                               .where((value) => value.trim().isNotEmpty)
                               .toList();
-                      final adSellerName = (((adData?['sellerUserName']
-                                              as String?) ??
-                                          (adData?['sellerName'] as String?) ??
-                                          '')
-                                      .trim());
+                      final adSellerName =
+                          (((adData?['sellerUserName'] as String?) ??
+                                  (adData?['sellerName'] as String?) ??
+                                  '')
+                              .trim());
                       final otherName = fallbackOtherName.isNotEmpty
                           ? fallbackOtherName
-                          : (!isDirectChat && isBuyer && adSellerName.isNotEmpty)
+                          : (!isDirectChat &&
+                                  isBuyer &&
+                                  adSellerName.isNotEmpty)
                               ? adSellerName
                               : (lastSenderName.isNotEmpty &&
                                       (data['senderId'] as String? ?? '') !=
                                           user.uid)
                                   ? lastSenderName
-                              : 'Usuario';
-                      final effectiveProfilePhoto = fallbackProfilePhoto.isNotEmpty
-                          ? fallbackProfilePhoto
-                          : ((data['senderId'] as String? ?? '') != user.uid
-                              ? lastSenderPhoto
-                              : '');
+                                  : 'Usuario';
+                      final effectiveProfilePhoto =
+                          fallbackProfilePhoto.isNotEmpty
+                              ? fallbackProfilePhoto
+                              : ((data['senderId'] as String? ?? '') != user.uid
+                                  ? lastSenderPhoto
+                                  : '');
                       final userFirstName = _firstNameOnly(otherName);
                       final productTitle =
                           adTitle.isNotEmpty ? adTitle : 'Conversa';
-                      final adImageUrl = adImages.isNotEmpty ? adImages.first : '';
+                      final adImageUrl =
+                          adImages.isNotEmpty ? adImages.first : '';
 
                       return ListTile(
                         tileColor: isDark ? AppTheme.black : Colors.white,
@@ -391,8 +401,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               otherUserId: otherId,
                               otherUserName: otherName,
                               otherUserPhoto: effectiveProfilePhoto,
-                              adId:
-                                  !isDirectChat && adId.isNotEmpty ? adId : null,
+                              adId: !isDirectChat && adId.isNotEmpty
+                                  ? adId
+                                  : null,
                               sellerId: (data['sellerId'] as String?)
                                           ?.trim()
                                           .isNotEmpty ==
