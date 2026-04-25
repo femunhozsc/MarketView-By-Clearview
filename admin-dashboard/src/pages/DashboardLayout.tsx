@@ -7,6 +7,7 @@ import {
   MessageSquareText,
   PackageSearch,
   RadioTower,
+  SlidersHorizontal,
   Users,
 } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
@@ -20,6 +21,7 @@ const navItems = [
   { to: '/support', label: 'Suporte', icon: Headset },
   { to: '/community', label: 'Comunidade', icon: RadioTower },
   { to: '/ads', label: 'Anuncios', icon: PackageSearch },
+  { to: '/personalize', label: 'Personalizar', icon: SlidersHorizontal },
   { to: '/users', label: 'Usuarios', icon: Users },
   { to: '/activities', label: 'Auditoria', icon: FileClock },
 ];

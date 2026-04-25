@@ -7,6 +7,7 @@ import { AdsPage } from './pages/AdsPage';
 import { ChatsPage } from './pages/ChatsPage';
 import { CommunityPostsPage } from './pages/CommunityPostsPage';
 import { OverviewPage } from './pages/OverviewPage';
+import { PersonalizePage } from './pages/PersonalizePage';
 import { SupportPage } from './pages/SupportPage';
 import { UsersPage } from './pages/UsersPage';
 import { PermissionGuard } from './components/PermissionGuard';
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="support" element={<SupportPage />} />
         <Route path="community" element={<CommunityPostsPage />} />
         <Route path="ads" element={<AdsPage />} />
+        <Route path="personalize" element={<PersonalizePage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="activities" element={<ActivitiesPage />} />
       </Route>
