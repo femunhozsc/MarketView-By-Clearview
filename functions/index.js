@@ -319,6 +319,78 @@ function mapAudit(doc) {
   };
 }
 
+function mapHomeCustomization(globalDoc, bannersDoc) {
+  const globalData = globalDoc.exists ? globalDoc.data() || {} : {};
+  const bannersData = bannersDoc.exists ? bannersDoc.data() || {} : {};
+  const bannersMap =
+    bannersData.banners && typeof bannersData.banners === 'object'
+      ? bannersData.banners
+      : {};
+  const banners = [];
+
+  for (let index = 1; index <= 5; index += 1) {
+    const slot = String(index);
+    const nested =
+      bannersMap[slot] && typeof bannersMap[slot] === 'object'
+        ? bannersMap[slot]
+        : {};
+    const directUrl = textFrom(bannersData[`banner${index}Url`]).trim();
+    const imageUrl = textFrom(nested.imageUrl, directUrl).trim() || directUrl;
+    banners.push({
+      id: slot,
+      title: textFrom(nested.title, `Banner ${index}`).trim(),
+      imageUrl,
+      enabled: nested.enabled !== false && imageUrl !== '',
+    });
+  }
+
+  return {
+    showPromotionalBanner: globalData.showPromotionalBanner !== false,
+    welcomeGreeting: textFrom(globalData.welcomeGreeting).trim(),
+    welcomeMessage: textFrom(globalData.welcomeMessage).trim(),
+    banners,
+    updatedAt:
+      toIso(globalData.updatedAt) ||
+      toIso(bannersData.updatedAt) ||
+      null,
+    updatedBy: textFrom(globalData.updatedBy || bannersData.updatedBy),
+  };
+}
+
+function sanitizeHomeCustomization(body) {
+  const rawBanners = Array.isArray(body.banners) ? body.banners : [];
+  const banners = [];
+
+  for (let index = 1; index <= 5; index += 1) {
+    const incoming =
+      rawBanners.find((banner) => textFrom(banner && banner.id) === String(index)) ||
+      rawBanners[index - 1] ||
+      {};
+    const imageUrl = textFrom(incoming.imageUrl).trim();
+    if (
+      imageUrl &&
+      !/^https:\/\/res\.cloudinary\.com\/.+/i.test(imageUrl) &&
+      !/^https:\/\/.+/i.test(imageUrl)
+    ) {
+      return { error: 'invalid_banner_url', slot: index };
+    }
+
+    banners.push({
+      id: String(index),
+      title: textFrom(incoming.title, `Banner ${index}`).trim().slice(0, 80),
+      imageUrl: imageUrl.slice(0, 1200),
+      enabled: incoming.enabled !== false,
+    });
+  }
+
+  return {
+    showPromotionalBanner: body.showPromotionalBanner !== false,
+    welcomeGreeting: textFrom(body.welcomeGreeting).trim().slice(0, 40),
+    welcomeMessage: textFrom(body.welcomeMessage).trim().slice(0, 180),
+    banners,
+  };
+}
+
 function mapCommunityPost(doc) {
   const data = doc.data() || {};
   return {
@@ -350,6 +422,93 @@ app.get('/admin/summary', async (req, res) => {
 
   return res.json({ usersTotal, adsActive, chatsTotal, pendingReports });
 });
+
+app.get('/admin/home-customization', async (req, res) => {
+  const [globalDoc, bannersDoc] = await Promise.all([
+    db.collection('app_config').doc('global_settings').get(),
+    db.collection('app_config').doc('home_banners').get(),
+  ]);
+
+  return res.json(mapHomeCustomization(globalDoc, bannersDoc));
+});
+
+app.patch(
+  '/admin/home-customization',
+  requireRole('admin'),
+  async (req, res) => {
+    const sanitized = sanitizeHomeCustomization(req.body || {});
+    if (sanitized.error) {
+      return res.status(400).json({
+        error: sanitized.error,
+        slot: sanitized.slot,
+      });
+    }
+
+    const globalRef = db.collection('app_config').doc('global_settings');
+    const bannersRef = db.collection('app_config').doc('home_banners');
+    const nestedBanners = {};
+    const bannerPatch = {};
+
+    for (const banner of sanitized.banners) {
+      nestedBanners[banner.id] = {
+        title: banner.title,
+        imageUrl: banner.imageUrl,
+        enabled: banner.enabled,
+      };
+      bannerPatch[`banner${banner.id}Url`] =
+        banner.enabled && banner.imageUrl ? banner.imageUrl : '';
+    }
+
+    const commonAuditFields = {
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: req.admin.uid,
+      updatedByEmail: req.admin.email,
+    };
+
+    await Promise.all([
+      globalRef.set(
+        {
+          showPromotionalBanner: sanitized.showPromotionalBanner,
+          welcomeGreeting: sanitized.welcomeGreeting,
+          welcomeMessage: sanitized.welcomeMessage,
+          ...commonAuditFields,
+        },
+        { merge: true },
+      ),
+      bannersRef.set(
+        {
+          banners: nestedBanners,
+          ...bannerPatch,
+          ...commonAuditFields,
+        },
+        { merge: true },
+      ),
+    ]);
+
+    await writeAudit(
+      req,
+      'home_customization_updated',
+      'app_config',
+      'home',
+      'Personalizacao da tela inicial atualizada pelo painel administrativo.',
+      {
+        newValue: {
+          showPromotionalBanner: sanitized.showPromotionalBanner,
+          welcomeGreeting: sanitized.welcomeGreeting,
+          welcomeMessage: sanitized.welcomeMessage,
+          banners: sanitized.banners,
+        },
+      },
+    );
+
+    const [globalDoc, bannersDoc] = await Promise.all([
+      globalRef.get(),
+      bannersRef.get(),
+    ]);
+
+    return res.json(mapHomeCustomization(globalDoc, bannersDoc));
+  },
+);
 
 app.get('/admin/ads', async (req, res) => {
   const { page, limit, offset } = pageParams(req);

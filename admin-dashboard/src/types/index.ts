@@ -150,3 +150,19 @@ export type CommunityPostSummary = {
   commentCount: number;
   createdAt: string | null;
 };
+
+export type HomeBannerSlot = {
+  id: string;
+  title: string;
+  imageUrl: string;
+  enabled: boolean;
+};
+
+export type HomeCustomization = {
+  showPromotionalBanner: boolean;
+  welcomeGreeting: string;
+  welcomeMessage: string;
+  banners: HomeBannerSlot[];
+  updatedAt: string | null;
+  updatedBy: string;
+};

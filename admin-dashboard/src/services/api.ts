@@ -8,6 +8,7 @@ import type {
   ChatSummary,
   CommunityPostSummary,
   DashboardSummary,
+  HomeCustomization,
   PageResponse,
   SupportDashboard,
   SupportChatSummary,
@@ -36,6 +37,19 @@ api.interceptors.request.use(async (config) => {
 
 export async function getDashboardSummary() {
   const response = await api.get<DashboardSummary>('/admin/summary');
+  return response.data;
+}
+
+export async function getHomeCustomization() {
+  const response = await api.get<HomeCustomization>('/admin/home-customization');
+  return response.data;
+}
+
+export async function updateHomeCustomization(data: HomeCustomization) {
+  const response = await api.patch<HomeCustomization>(
+    '/admin/home-customization',
+    data,
+  );
   return response.data;
 }
 

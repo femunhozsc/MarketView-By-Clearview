@@ -45,25 +45,38 @@ List<String> _resolvePromoBannerSources(Map<String, dynamic>? data) {
   final normalizedBannerMap = bannerMap is Map
       ? Map<String, dynamic>.from(bannerMap)
       : const <String, dynamic>{};
+  final hasConfiguredBanners = normalizedBannerMap.isNotEmpty ||
+      _promoBannerAssets.asMap().keys.any((index) {
+        final slot = index + 1;
+        return (data?['banner${slot}Url'] ?? '').toString().trim().isNotEmpty;
+      });
 
   for (var index = 0; index < _promoBannerAssets.length; index++) {
     final slot = index + 1;
-    final directUrl = (data?['banner${slot}Url'] ?? '').toString().trim();
     final nestedBanner = normalizedBannerMap['$slot'] is Map<String, dynamic>
         ? normalizedBannerMap['$slot'] as Map<String, dynamic>
         : normalizedBannerMap['$slot'] is Map
             ? Map<String, dynamic>.from(normalizedBannerMap['$slot'] as Map)
             : null;
+    final isEnabled = nestedBanner?['enabled'] != false;
+    if (nestedBanner != null && !isEnabled) continue;
+
+    final directUrl = (data?['banner${slot}Url'] ?? '').toString().trim();
     final nestedUrl = (nestedBanner?['imageUrl'] ?? '').toString().trim();
     final resolvedSource = directUrl.isNotEmpty
         ? directUrl
         : nestedUrl.isNotEmpty
             ? nestedUrl
-            : _promoBannerAssets[index];
+            : hasConfiguredBanners
+                ? ''
+                : _promoBannerAssets[index];
+    if (resolvedSource.isEmpty) continue;
     resolved.add(resolvedSource);
   }
 
-  return resolved;
+  return resolved.isNotEmpty || hasConfiguredBanners
+      ? resolved
+      : List<String>.from(_promoBannerAssets);
 }
 
 String _normalizeLocationValue(String value) => AdModel.normalizeValue(value);
@@ -860,7 +873,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
     final recommendedAds = _applyFilters(_recommendedAds).take(6).toList();
     final hour = DateTime.now().hour;
     const marketBlue = Color(0xFF0066EE);
-    final greeting = hour >= 5 && hour < 12
+    final defaultGreeting = hour >= 5 && hour < 12
         ? 'Bom dia'
         : hour >= 12 && hour < 19
             ? 'Boa tarde'
@@ -891,6 +904,11 @@ class _ForYouScreenState extends State<ForYouScreen> {
                       settings?['showPromotionalBanner'] != false;
                   final welcomeMessage =
                       (settings?['welcomeMessage'] ?? '').toString().trim();
+                  final customGreeting =
+                      (settings?['welcomeGreeting'] ?? '').toString().trim();
+                  final greeting = customGreeting.isNotEmpty
+                      ? customGreeting
+                      : defaultGreeting;
                   final headerSubtitle = welcomeMessage.isNotEmpty
                       ? welcomeMessage
                       : defaultHeaderSubtitle;
@@ -1572,6 +1590,9 @@ class _HomePromoBannerState extends State<_HomePromoBanner> {
         final bannerSources = _resolvePromoBannerSources(
           snapshot.data?.data() ?? widget.initialBannerSettings,
         );
+        if (bannerSources.isEmpty) {
+          return const SizedBox.shrink();
+        }
 
         return Container(
           decoration: BoxDecoration(

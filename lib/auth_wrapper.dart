@@ -116,25 +116,38 @@ class _LaunchFlowState extends State<_LaunchFlow> {
     final normalizedBannerMap = bannerMap is Map
         ? Map<String, dynamic>.from(bannerMap)
         : const <String, dynamic>{};
+    final hasConfiguredBanners = normalizedBannerMap.isNotEmpty ||
+        _promoBannerAssets.asMap().keys.any((index) {
+          final slot = index + 1;
+          return (data?['banner${slot}Url'] ?? '').toString().trim().isNotEmpty;
+        });
 
     for (var index = 0; index < _promoBannerAssets.length; index++) {
       final slot = index + 1;
-      final directUrl = (data?['banner${slot}Url'] ?? '').toString().trim();
       final nestedBanner = normalizedBannerMap['$slot'] is Map<String, dynamic>
           ? normalizedBannerMap['$slot'] as Map<String, dynamic>
           : normalizedBannerMap['$slot'] is Map
               ? Map<String, dynamic>.from(normalizedBannerMap['$slot'] as Map)
               : null;
+      final isEnabled = nestedBanner?['enabled'] != false;
+      if (nestedBanner != null && !isEnabled) continue;
+
+      final directUrl = (data?['banner${slot}Url'] ?? '').toString().trim();
       final nestedUrl = (nestedBanner?['imageUrl'] ?? '').toString().trim();
       final resolvedSource = directUrl.isNotEmpty
           ? directUrl
           : nestedUrl.isNotEmpty
               ? nestedUrl
-              : _promoBannerAssets[index];
+              : hasConfiguredBanners
+                  ? ''
+                  : _promoBannerAssets[index];
+      if (resolvedSource.isEmpty) continue;
       resolved.add(resolvedSource);
     }
 
-    return resolved;
+    return resolved.isNotEmpty || hasConfiguredBanners
+        ? resolved
+        : List<String>.from(_promoBannerAssets);
   }
 
   Future<void> _precacheHomeBanners(List<String> sources) async {
