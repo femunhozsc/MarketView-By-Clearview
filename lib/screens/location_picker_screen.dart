@@ -1,10 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import '../theme/app_theme.dart';
@@ -212,8 +209,6 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     return 200 + (((sliderValue - 0.5) / 0.5) * 800);
   }
 
-
-
   Future<void> _useCurrentLocation() async {
     setState(() => _loadingCurrentLocation = true);
     try {
@@ -336,7 +331,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   _RegionPreset? _findPreset(String input) {
     final normalized = _normalize(widgetText: input);
     for (final preset in _presets) {
-      if (preset.aliases.any((alias) => _normalize(widgetText: alias) == normalized)) {
+      if (preset.aliases
+          .any((alias) => _normalize(widgetText: alias) == normalized)) {
         return preset;
       }
     }
@@ -385,7 +381,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   color: isDark ? AppTheme.blackCard : Colors.white,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB),
+                    color:
+                        isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB),
                   ),
                 ),
                 child: Column(
@@ -403,7 +400,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     Text(
                       'Digite Brasil, um estado como Parana ou Sao Paulo, ou uma cidade. Estados e pais bloqueiam o raio; cidade libera ajuste fino.',
                       style: GoogleFonts.roboto(
-                        color: isDark ? AppTheme.whiteSecondary : Colors.grey.shade700,
+                        color: isDark
+                            ? AppTheme.whiteSecondary
+                            : Colors.grey.shade700,
                         fontSize: 13.5,
                       ),
                     ),
@@ -457,7 +456,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                           ),
                         ),
                         TextButton.icon(
-                          onPressed: _loadingCurrentLocation ? null : _useCurrentLocation,
+                          onPressed: _loadingCurrentLocation
+                              ? null
+                              : _useCurrentLocation,
                           icon: const Icon(Icons.my_location_rounded),
                           label: const Text('Usar localizacao'),
                         ),
@@ -477,16 +478,20 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                                 _radiusSliderValue = value;
                                 _radiusKm = nextRadius.clamp(1, 1000);
                               });
-                              _mapController.move(point, _zoomForCurrentSelection());
+                              _mapController.move(
+                                  point, _zoomForCurrentSelection());
                             },
                     ),
                     Row(
                       children: [
-                        Text('1 km', style: GoogleFonts.roboto(color: Colors.grey)),
+                        Text('1 km',
+                            style: GoogleFonts.roboto(color: Colors.grey)),
                         const Spacer(),
-                        Text('200 km', style: GoogleFonts.roboto(color: Colors.grey)),
+                        Text('200 km',
+                            style: GoogleFonts.roboto(color: Colors.grey)),
                         const Spacer(),
-                        Text('1000 km', style: GoogleFonts.roboto(color: Colors.grey)),
+                        Text('1000 km',
+                            style: GoogleFonts.roboto(color: Colors.grey)),
                       ],
                     ),
                   ],
@@ -508,8 +513,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                         setState(() {
                           _selectedPoint = tappedPoint;
                           _selectedScope = _scopeCity;
-                          _selectedRegionKey =
-                              _normalize(widgetText: _labelController.text.trim());
+                          _selectedRegionKey = _normalize(
+                              widgetText: _labelController.text.trim());
                           if (_labelController.text.trim().isEmpty) {
                             _labelController.text = 'Ponto selecionado';
                           }
@@ -518,7 +523,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName: 'com.clearviewdev.marketview',
                       ),
                       if (!_isRadiusLocked)
@@ -528,8 +534,10 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                               point: point,
                               radius: _radiusKm * 1000,
                               useRadiusInMeter: true,
-                              color: AppTheme.facebookBlue.withValues(alpha: 0.14),
-                              borderColor: AppTheme.facebookBlue.withValues(alpha: 0.5),
+                              color:
+                                  AppTheme.facebookBlue.withValues(alpha: 0.14),
+                              borderColor:
+                                  AppTheme.facebookBlue.withValues(alpha: 0.5),
                               borderStrokeWidth: 2,
                             ),
                           ],

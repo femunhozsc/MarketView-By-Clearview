@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
+import '../theme/app_theme.dart';
 
 import '../screens/profile_screen.dart';
 
@@ -94,37 +95,51 @@ class _FavoriteButtonState extends State<FavoriteButton>
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
     final isFav = _isFavorite(userProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final iconSize = widget.size * 0.53;
+    final backgroundColor =
+        isDark ? AppTheme.blackLight : Colors.white.withValues(alpha: 0.97);
+    final inactiveIconColor =
+        isDark ? Colors.white.withValues(alpha: 0.72) : Colors.grey.shade500;
+    final borderColor =
+        isDark ? Colors.white.withValues(alpha: 0.08) : const Color(0xFFD7DEE8);
+    final shadowColor = isDark
+        ? Colors.black.withValues(alpha: 0.18)
+        : const Color(0xFF0F172A).withValues(alpha: 0.08);
+    final icon =
+        isFav ? Icons.favorite_rounded : Icons.favorite_outline_rounded;
+    final iconColor = isFav ? Colors.red.shade500 : inactiveIconColor;
 
-    return GestureDetector(
-      onTap: _toggle,
+    return InkWell(
+      onTap: _isLoading ? null : _toggle,
+      borderRadius: BorderRadius.circular(999),
       child: ScaleTransition(
         scale: _scaleAnim,
         child: widget.showBackground
-              ? Container(
+            ? Container(
                 width: widget.size,
                 height: widget.size,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.97),
+                  color: backgroundColor,
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  border: Border.all(color: borderColor),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.12),
-                      blurRadius: 10,
+                      color: shadowColor,
+                      blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: Icon(
-                  isFav ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
-                  color: isFav ? Colors.red : Colors.grey.shade400,
+                  icon,
+                  color: iconColor,
                   size: iconSize,
                 ),
               )
             : Icon(
-                isFav ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
-                color: isFav ? Colors.red : Colors.grey.shade400,
+                icon,
+                color: iconColor,
                 size: iconSize,
               ),
       ),

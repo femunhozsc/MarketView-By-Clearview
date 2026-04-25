@@ -11,6 +11,7 @@ import '../providers/user_provider.dart';
 import '../services/cep_service.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _cloudinary = CloudinaryService();
   final _firestoreService = FirestoreService();
   final _cepService = CepService();
+  final _storage = StorageService();
 
   final _firstNameCtrl = TextEditingController();
   final _lastNameCtrl = TextEditingController();
@@ -149,17 +151,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (_newPhoto != null) {
         photoUrl = await _cloudinary.uploadProfilePhoto(user.uid, _newPhoto!);
         if (photoUrl == null || photoUrl.trim().isEmpty) {
-          throw Exception(
-            'Nao foi possivel atualizar a foto de perfil no Cloudinary.',
-          );
+          photoUrl = await _storage.uploadProfilePhoto(user.uid, _newPhoto!);
+        }
+        if (photoUrl == null || photoUrl.trim().isEmpty) {
+          throw Exception('Nao foi possivel atualizar a foto de perfil.');
         }
       }
       if (_newBanner != null) {
         bannerUrl = await _cloudinary.uploadUserBanner(user.uid, _newBanner!);
         if (bannerUrl == null || bannerUrl.trim().isEmpty) {
-          throw Exception(
-            'Nao foi possivel atualizar o banner no Cloudinary.',
-          );
+          bannerUrl = await _storage.uploadUserBanner(user.uid, _newBanner!);
+        }
+        if (bannerUrl == null || bannerUrl.trim().isEmpty) {
+          throw Exception('Nao foi possivel atualizar o banner.');
         }
       }
 

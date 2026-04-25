@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
@@ -8,8 +12,9 @@ import '../models/ad_model.dart';
 import '../models/store_model.dart';
 import '../providers/user_provider.dart';
 import '../services/cloudinary_service.dart';
+import '../services/ad_ai_service.dart';
+import '../services/external_market_price_service.dart';
 import '../services/firestore_service.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class _PropertyCostDraft {
@@ -67,6 +72,7 @@ const String _listingFlowProducts = 'products';
 const String _listingFlowProperties = 'properties';
 const String _listingFlowServices = 'services';
 const String _listingFlowJobs = 'jobs';
+const int _maxAdPhotos = 6;
 
 const List<_ListingFlowOption> _listingFlowOptions = [
   _ListingFlowOption(
@@ -324,8 +330,9 @@ class CreateAdScreen extends StatefulWidget {
 class _CreateAdScreenState extends State<CreateAdScreen> {
   final _pageController = PageController();
   final _cloudinary = CloudinaryService();
+  final _adAiService = AdAiService();
+  final _externalMarketPriceService = ExternalMarketPriceService();
   final _firestore = FirestoreService();
-  final _storage = StorageService();
 
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
@@ -335,6 +342,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   final _vehicleBrandCtrl = TextEditingController();
   final _vehicleModelCtrl = TextEditingController();
   final _vehicleYearCtrl = TextEditingController();
+  final _vehicleEngineCtrl = TextEditingController();
   final _vehicleOwnerCountCtrl = TextEditingController();
   final _vehicleOptionalCtrl = TextEditingController();
   final _propertyAreaCtrl = TextEditingController();
@@ -364,6 +372,19 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   String? _selectedVehicleColor;
   String? _selectedVehicleFuelType;
   String? _selectedStoreId;
+  String? _lastAiDraftSignature;
+  List<String> _lastAiPriceSearchTerms = const [];
+  bool _hasAiDraftSuggestion = false;
+  AdPriceSuggestion? _priceSuggestion;
+  bool _isLoadingPriceSuggestion = false;
+  bool _isDraftAiLoading = false;
+  bool _isApplyingAiSuggestion = false;
+  String? _draftAiStatus;
+  String? _draftAiDebugError;
+  bool _priceWasAutoFilled = false;
+  int _photoPreviewIndex = 0;
+  int _draftAiRequestToken = 0;
+  Timer? _draftAiDebounce;
 
   bool get _isBuyRequest => widget.initialIntent == AdModel.intentBuy;
 
@@ -451,14 +472,16 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
 
   int get _stepCount {
     if (_isBuyRequest) return 5;
-    final base = _needsStoreSelection ? 6 : 5;
+    final base = _needsStoreSelection ? 7 : 6;
     return base +
         (_needsVehicleDetailsStep ? 1 : 0) +
         (_needsPropertyCostsStep ? 1 : 0);
   }
 
   int get _typeStepIndex => _isBuyRequest ? 0 : (_needsStoreSelection ? 2 : 1);
-  int get _infoStepIndex => _typeStepIndex + 1;
+  int get _titleStepIndex => _isBuyRequest ? -1 : _typeStepIndex + 1;
+  int get _infoStepIndex =>
+      _isBuyRequest ? _typeStepIndex + 1 : _titleStepIndex + 1;
   int get _vehicleStepIndex =>
       _needsVehicleDetailsStep ? _infoStepIndex + 1 : -1;
   int get _priceStepIndex => _isBuyRequest
@@ -489,6 +512,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       _stepAccount(isDark),
       if (_needsStoreSelection) _stepStoreSelection(isDark),
       _stepType(isDark),
+      _stepTitle(isDark),
       _stepInfo(isDark),
       if (_needsVehicleDetailsStep) _stepVehicleDetails(isDark),
       _stepPricing(isDark),
@@ -501,7 +525,10 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   @override
   void initState() {
     super.initState();
+    _titleCtrl.addListener(_handleDraftInputChanged);
+    _descCtrl.addListener(_handleDraftInputChanged);
     _priceCtrl.addListener(_formatPriceInput);
+    _priceCtrl.addListener(_handlePriceFieldChanged);
     _hourlyPriceCtrl.addListener(_formatHourlyPriceInput);
     _selectedVehicleColor = vehicleColorOptions.first;
     _selectedVehicleFuelType = vehicleFuelOptions.last;
@@ -516,10 +543,14 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
 
   @override
   void dispose() {
+    _draftAiDebounce?.cancel();
     _pageController.dispose();
+    _titleCtrl.removeListener(_handleDraftInputChanged);
     _titleCtrl.dispose();
+    _descCtrl.removeListener(_handleDraftInputChanged);
     _descCtrl.dispose();
     _priceCtrl.removeListener(_formatPriceInput);
+    _priceCtrl.removeListener(_handlePriceFieldChanged);
     _priceCtrl.dispose();
     _hourlyPriceCtrl.removeListener(_formatHourlyPriceInput);
     _hourlyPriceCtrl.dispose();
@@ -527,6 +558,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     _vehicleBrandCtrl.dispose();
     _vehicleModelCtrl.dispose();
     _vehicleYearCtrl.dispose();
+    _vehicleEngineCtrl.dispose();
     _vehicleOwnerCountCtrl.dispose();
     _vehicleOptionalCtrl.dispose();
     _propertyAreaCtrl.dispose();
@@ -595,6 +627,20 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         selection: TextSelection.collapsed(offset: result.length),
       );
     }
+  }
+
+  void _handlePriceFieldChanged() {
+    if (!mounted || _priceSuggestion == null) return;
+    setState(() {});
+  }
+
+  void _changePhotoPreviewBy(int delta) {
+    if (_images.isEmpty) return;
+    setState(() {
+      final nextIndex =
+          (_photoPreviewIndex + delta).clamp(0, _images.length - 1);
+      _photoPreviewIndex = nextIndex;
+    });
   }
 
   void _formatHourlyPriceInput() {
@@ -742,6 +788,14 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     return true;
   }
 
+  bool _validateTitleStep() {
+    if (_titleCtrl.text.trim().isEmpty) {
+      _showMessage('Informe um título para o anúncio.');
+      return false;
+    }
+    return true;
+  }
+
   bool _validateVehicleStep() {
     if (!_needsVehicleDetailsStep) return true;
     if (_vehicleBrandCtrl.text.trim().isEmpty) {
@@ -838,6 +892,10 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       return false;
     }
 
+    if (_currentStep == _titleStepIndex) {
+      return _validateTitleStep();
+    }
+
     if (_currentStep == _infoStepIndex) {
       return _validateInfoStep();
     }
@@ -858,6 +916,14 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   }
 
   Future<void> _nextStep() async {
+    if (!_isBuyRequest &&
+        (_currentStep == _titleStepIndex || _currentStep == _infoStepIndex)) {
+      await _suggestDraftFromInputs(
+        force: true,
+        allowTextUpdates: _currentStep == _titleStepIndex,
+      );
+    }
+
     if (!_validateCurrentStep()) return;
     if (_isLastStep) {
       await _submit();
@@ -871,6 +937,669 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     );
     if (!mounted) return;
     setState(() => _currentStep = nextStep);
+    if (!_isBuyRequest && nextStep == _priceStepIndex) {
+      await _loadPriceSuggestion();
+    }
+  }
+
+  Map<String, List<String>> _categoryTypesForPrompt() {
+    return {
+      for (final category in _availableCategories)
+        category: categoryTypeOptions[category] ?? const <String>[],
+    };
+  }
+
+  Map<String, Map<String, String>> _specFieldsForPrompt() {
+    final allowedKeys = <String>{
+      ..._availableCategories,
+      for (final category in _availableCategories)
+        ...(categoryTypeOptions[category] ?? const <String>[]),
+    };
+
+    return {
+      for (final entry in _categorySpecFieldOptions.entries)
+        if (allowedKeys.contains(entry.key))
+          entry.key: {
+            for (final config in entry.value) config.id: config.label,
+          },
+    };
+  }
+
+  void _handleDraftInputChanged() {
+    if (!AdAiService.isConfigured ||
+        _isApplyingAiSuggestion ||
+        (_currentStep != _titleStepIndex && _currentStep != _infoStepIndex)) {
+      return;
+    }
+    _draftAiDebounce?.cancel();
+    _draftAiDebounce = Timer(
+      const Duration(milliseconds: 900),
+      () => _suggestDraftFromInputs(
+        allowTextUpdates: _currentStep == _titleStepIndex,
+      ),
+    );
+  }
+
+  String _currentAiDraftSignature() {
+    final title = _titleCtrl.text.trim();
+    final description = _descCtrl.text.trim();
+    return [
+      _selectedListingFlow,
+      _selectedType,
+      _selectedCategory,
+      title,
+      description,
+    ].join('|');
+  }
+
+  String? _matchAllowedValue(String? value, List<String> allowed) {
+    final candidate = value?.trim() ?? '';
+    if (candidate.isEmpty) return null;
+    final normalizedCandidate = AdModel.normalizeValue(candidate);
+    for (final option in allowed) {
+      if (AdModel.normalizeValue(option) == normalizedCandidate) {
+        return option;
+      }
+    }
+    return null;
+  }
+
+  String _valueAfterAi(String currentValue, String? suggestedValue) {
+    final value = suggestedValue?.trim() ?? '';
+    return value.isNotEmpty ? value : currentValue;
+  }
+
+  void _setControllerTextFromAi(
+    TextEditingController controller,
+    String value,
+  ) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || controller.text.trim() == trimmed) return;
+    controller.value = TextEditingValue(
+      text: trimmed,
+      selection: TextSelection.collapsed(offset: trimmed.length),
+    );
+  }
+
+  Future<void> _suggestDraftFromInputs({
+    bool force = false,
+    bool allowTextUpdates = false,
+  }) async {
+    if (!AdAiService.isConfigured) {
+      if (mounted) {
+        setState(() {
+          _draftAiStatus =
+              'IA desativada: inicie o app com GEMINI_API_KEY em --dart-define.';
+        });
+      }
+      debugPrint(
+        'MarketView IA: GEMINI_API_KEY ausente. Use '
+        '--dart-define=GEMINI_API_KEY=sua_chave ao executar o app.',
+      );
+      return;
+    }
+    final title = _titleCtrl.text.trim();
+    final description = _descCtrl.text.trim();
+    final signature = _currentAiDraftSignature();
+    if (title.length < 3 ||
+        (!force && _lastAiDraftSignature == signature) ||
+        (!force && _isDraftAiLoading)) {
+      return;
+    }
+
+    final requestToken = ++_draftAiRequestToken;
+    debugPrint(
+      'MarketView IA: iniciando sugestao para titulo="$title" '
+      'categoria=$_selectedCategory tipo=$_selectedType.',
+    );
+    setState(() {
+      _isDraftAiLoading = true;
+      _draftAiStatus = null;
+      _draftAiDebugError = null;
+    });
+    try {
+      final suggestion = await _adAiService.suggestDraft(
+        title: title,
+        description: description,
+        listingTypeLabel: _selectedListingFlowOption.title,
+        categories: _availableCategories,
+        categoryTypesByCategory: _categoryTypesForPrompt(),
+        specFieldsByType: _specFieldsForPrompt(),
+        vehicleColors: vehicleColorOptions,
+        vehicleFuelTypes: vehicleFuelOptions,
+        vehicleOptionals: vehicleOptionalSuggestions,
+      );
+      if (!mounted) return;
+      if (!force &&
+          (requestToken != _draftAiRequestToken ||
+              _currentAiDraftSignature() != signature)) {
+        return;
+      }
+
+      final suggestedCategory =
+          _matchAllowedValue(suggestion.category, _availableCategories);
+      final allowedTypes = suggestedCategory != null
+          ? categoryTypeOptions[suggestedCategory] ?? const <String>[]
+          : const <String>[];
+      final suggestedType = _matchAllowedValue(
+        suggestion.categoryType,
+        allowedTypes,
+      );
+
+      setState(() {
+        _isApplyingAiSuggestion = true;
+        if (allowTextUpdates) {
+          _setControllerTextFromAi(_titleCtrl, suggestion.correctedTitle);
+        }
+        if (_descCtrl.text.trim().isEmpty) {
+          _setControllerTextFromAi(_descCtrl, suggestion.suggestedDescription);
+        }
+        if (suggestedCategory != null) {
+          _selectedCategory = suggestedCategory;
+          _selectedCategoryType = suggestedType;
+          _customCategoryTypeLabel = null;
+          _syncListingFlowFromSelection();
+        }
+        _lastAiPriceSearchTerms =
+            List<String>.from(suggestion.priceSearchTerms);
+        if (_needsVehicleDetailsStep) {
+          _setControllerTextFromAi(
+            _vehicleBrandCtrl,
+            _valueAfterAi(_vehicleBrandCtrl.text, suggestion.vehicleBrand),
+          );
+          _setControllerTextFromAi(
+            _vehicleModelCtrl,
+            _valueAfterAi(_vehicleModelCtrl.text, suggestion.vehicleModel),
+          );
+          if (_vehicleYearCtrl.text.trim().isEmpty &&
+              suggestion.vehicleYear != null) {
+            _setControllerTextFromAi(
+              _vehicleYearCtrl,
+              suggestion.vehicleYear!.toString(),
+            );
+          }
+          _setControllerTextFromAi(
+            _vehicleEngineCtrl,
+            _valueAfterAi(_vehicleEngineCtrl.text, suggestion.vehicleEngine),
+          );
+          if (_kmCtrl.text.trim().isEmpty && suggestion.vehicleKm != null) {
+            _setControllerTextFromAi(_kmCtrl, suggestion.vehicleKm!.toString());
+          }
+          if (_vehicleOwnerCountCtrl.text.trim().isEmpty &&
+              suggestion.vehicleOwnerCount != null) {
+            _setControllerTextFromAi(
+              _vehicleOwnerCountCtrl,
+              suggestion.vehicleOwnerCount!.toString(),
+            );
+          }
+          final matchedColor = _matchAllowedValue(
+            suggestion.vehicleColor,
+            vehicleColorOptions,
+          );
+          if ((_selectedVehicleColor == null ||
+                  _selectedVehicleColor == vehicleColorOptions.first) &&
+              matchedColor != null) {
+            _selectedVehicleColor = matchedColor;
+          }
+          final matchedFuel = _matchAllowedValue(
+            suggestion.vehicleFuelType,
+            vehicleFuelOptions,
+          );
+          if ((_selectedVehicleFuelType == null ||
+                  _selectedVehicleFuelType == vehicleFuelOptions.last) &&
+              matchedFuel != null) {
+            _selectedVehicleFuelType = matchedFuel;
+          }
+          for (final optional in suggestion.vehicleOptionals) {
+            final matchedOptional = _matchAllowedValue(
+              optional,
+              vehicleOptionalSuggestions,
+            );
+            if (matchedOptional == null ||
+                _selectedVehicleOptionals.contains(matchedOptional) ||
+                matchedOptional == 'Outro +') {
+              continue;
+            }
+            _selectedVehicleOptionals.add(matchedOptional);
+          }
+        }
+        for (final config in _currentSpecConfigs) {
+          final specValue = suggestion.specs[config.id];
+          if (specValue == null || specValue.isEmpty) continue;
+          final controller = _specControllerFor(config.id);
+          if (controller.text.trim().isEmpty) {
+            _setControllerTextFromAi(controller, specValue);
+          }
+        }
+        _isApplyingAiSuggestion = false;
+        _hasAiDraftSuggestion = suggestion.correctedTitle.isNotEmpty ||
+            suggestion.suggestedDescription.isNotEmpty ||
+            suggestion.specs.isNotEmpty ||
+            suggestion.vehicleKm != null ||
+            suggestion.vehicleBrand?.isNotEmpty == true ||
+            suggestion.vehicleModel?.isNotEmpty == true ||
+            suggestion.vehicleYear != null ||
+            suggestion.vehicleEngine?.isNotEmpty == true ||
+            suggestion.vehicleColor?.isNotEmpty == true ||
+            suggestion.vehicleFuelType?.isNotEmpty == true ||
+            suggestion.vehicleOwnerCount != null ||
+            suggestion.vehicleOptionals.isNotEmpty;
+        _lastAiDraftSignature = _currentAiDraftSignature();
+        _draftAiStatus = null;
+        _draftAiDebugError = null;
+      });
+      debugPrint(
+        'MarketView IA: sugestao aplicada. '
+        'categoria=${suggestion.category}, tipo=${suggestion.categoryType}.',
+      );
+      _normalizeCurrentStep();
+    } catch (error, stackTrace) {
+      // A IA deve ajudar sem interromper a edicao do anuncio.
+      debugPrint('MarketView IA: falha ao gerar sugestao: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (mounted) {
+        final quotaExceeded = _isAiQuotaError(error);
+        final usedFallback = quotaExceeded &&
+            _applyLocalDraftFallback(allowTextUpdates: allowTextUpdates);
+        if (!usedFallback) {
+          setState(() {
+            _draftAiStatus = quotaExceeded
+                ? 'Cota da IA esgotada no Gemini.'
+                : 'IA nao respondeu agora.';
+            _draftAiDebugError = _shortAiError(error);
+          });
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDraftAiLoading = false;
+          _isApplyingAiSuggestion = false;
+        });
+      }
+    }
+  }
+
+  bool _isAiQuotaError(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('429') || text.contains('quota');
+  }
+
+  bool _applyLocalDraftFallback({required bool allowTextUpdates}) {
+    final title = _titleCtrl.text.trim();
+    if (title.length < 3) return false;
+
+    final normalized = AdModel.normalizeValue(title);
+    final year =
+        RegExp(r'\b(19[5-9]\d|20[0-4]\d)\b').firstMatch(title)?.group(0);
+    final vehicleMatches = <String, (String, String)>{
+      'civic': ('Honda', 'Civic'),
+      'corolla': ('Toyota', 'Corolla'),
+      'hilux': ('Toyota', 'Hilux'),
+      'onix': ('Chevrolet', 'Onix'),
+      'prisma': ('Chevrolet', 'Prisma'),
+      'gol': ('Volkswagen', 'Gol'),
+      'voyage': ('Volkswagen', 'Voyage'),
+      'fiesta': ('Ford', 'Fiesta'),
+      'ka': ('Ford', 'Ka'),
+      'uno': ('Fiat', 'Uno'),
+      'palio': ('Fiat', 'Palio'),
+    };
+
+    for (final entry in vehicleMatches.entries) {
+      if (!RegExp('\\b${RegExp.escape(entry.key)}\\b').hasMatch(normalized)) {
+        continue;
+      }
+
+      final brand = entry.value.$1;
+      final model = entry.value.$2;
+      final correctedTitle = [
+        brand,
+        model,
+        if (year != null) year,
+      ].join(' ');
+
+      setState(() {
+        _isApplyingAiSuggestion = true;
+        if (allowTextUpdates) {
+          _setControllerTextFromAi(_titleCtrl, correctedTitle);
+        }
+        if (_descCtrl.text.trim().isEmpty) {
+          _setControllerTextFromAi(
+            _descCtrl,
+            '$correctedTitle anunciado no MarketView. Confira os dados e edite os detalhes antes de publicar.',
+          );
+        }
+        if (_availableCategories.contains('Veiculos')) {
+          _selectedCategory = 'Veiculos';
+          _selectedCategoryType = 'Carros';
+          _customCategoryTypeLabel = null;
+          _syncListingFlowFromSelection();
+        }
+        if (_vehicleBrandCtrl.text.trim().isEmpty) {
+          _setControllerTextFromAi(_vehicleBrandCtrl, brand);
+        }
+        if (_vehicleModelCtrl.text.trim().isEmpty) {
+          _setControllerTextFromAi(_vehicleModelCtrl, model);
+        }
+        if (_vehicleYearCtrl.text.trim().isEmpty && year != null) {
+          _setControllerTextFromAi(_vehicleYearCtrl, year);
+        }
+        _hasAiDraftSuggestion = true;
+        _lastAiDraftSignature = _currentAiDraftSignature();
+        _draftAiStatus =
+            'Cota da IA esgotada. Usei um preenchimento local basico.';
+        _draftAiDebugError = null;
+        _isApplyingAiSuggestion = false;
+      });
+      _normalizeCurrentStep();
+      return true;
+    }
+
+    final electronicType = _localElectronicType(normalized);
+    if (electronicType != null &&
+        _availableCategories.contains('Eletronicos')) {
+      setState(() {
+        _isApplyingAiSuggestion = true;
+        _selectedCategory = 'Eletronicos';
+        _selectedCategoryType = electronicType;
+        _customCategoryTypeLabel = null;
+        _syncListingFlowFromSelection();
+        if (_descCtrl.text.trim().isEmpty) {
+          _setControllerTextFromAi(
+            _descCtrl,
+            '$title anunciado no MarketView. Confira as especificacoes e edite o que faltar antes de publicar.',
+          );
+        }
+        _applyLocalTechSpecs(normalized);
+        _hasAiDraftSuggestion = true;
+        _lastAiDraftSignature = _currentAiDraftSignature();
+        _draftAiStatus =
+            'Cota da IA esgotada. Usei um preenchimento local basico.';
+        _draftAiDebugError = null;
+        _isApplyingAiSuggestion = false;
+      });
+      _normalizeCurrentStep();
+      return true;
+    }
+
+    if (_selectedType == AdModel.serviceType) {
+      setState(() {
+        _isApplyingAiSuggestion = true;
+        if (normalized.contains('celular') ||
+            normalized.contains('notebook') ||
+            normalized.contains('computador') ||
+            normalized.contains('informatica')) {
+          _selectedCategory = 'Assistencia tecnica';
+          _selectedCategoryType = normalized.contains('notebook')
+              ? 'Notebook'
+              : normalized.contains('computador')
+                  ? 'Computador'
+                  : 'Celular';
+        }
+        if (_descCtrl.text.trim().isEmpty) {
+          _setControllerTextFromAi(
+            _descCtrl,
+            '$title anunciado no MarketView. Informe regiao de atendimento, disponibilidade e o que esta incluso.',
+          );
+        }
+        _syncListingFlowFromSelection();
+        _hasAiDraftSuggestion = true;
+        _lastAiDraftSignature = _currentAiDraftSignature();
+        _draftAiStatus =
+            'Cota da IA esgotada. Usei um preenchimento local basico.';
+        _draftAiDebugError = null;
+        _isApplyingAiSuggestion = false;
+      });
+      _normalizeCurrentStep();
+      return true;
+    }
+
+    return false;
+  }
+
+  String? _localElectronicType(String normalizedTitle) {
+    if (normalizedTitle.contains('iphone') ||
+        normalizedTitle.contains('samsung') ||
+        normalizedTitle.contains('celular') ||
+        normalizedTitle.contains('smartphone')) {
+      return 'Celulares';
+    }
+    if (normalizedTitle.contains('notebook') ||
+        normalizedTitle.contains('macbook')) {
+      return 'Notebooks';
+    }
+    if (normalizedTitle.contains('pc') ||
+        normalizedTitle.contains('computador')) {
+      return 'Computadores';
+    }
+    if (normalizedTitle.contains('tablet') ||
+        normalizedTitle.contains('ipad')) {
+      return 'Tablets';
+    }
+    if (normalizedTitle.contains('tv')) return 'TVs';
+    if (normalizedTitle.contains('playstation') ||
+        normalizedTitle.contains('xbox') ||
+        normalizedTitle.contains('nintendo')) {
+      return 'Videogames';
+    }
+    return null;
+  }
+
+  void _applyLocalTechSpecs(String normalizedTitle) {
+    final storageMatch =
+        RegExp(r'\b(\d{2,4})\s*(gb|tb)\b').firstMatch(normalizedTitle);
+    if (storageMatch != null) {
+      final value =
+          '${storageMatch.group(1)} ${storageMatch.group(2)!.toUpperCase()}';
+      for (final key in [
+        'phone_storage',
+        'notebook_storage',
+        'pc_storage',
+        'tablet_storage',
+        'console_storage',
+      ]) {
+        final controller = _specControllerFor(key);
+        if (controller.text.trim().isEmpty) {
+          _setControllerTextFromAi(controller, value);
+        }
+      }
+    }
+
+    final ramMatch = RegExp(r'\b(\d{1,3})\s*gb\s*(ram|memoria)?\b')
+        .firstMatch(normalizedTitle);
+    if (ramMatch != null && normalizedTitle.contains('ram')) {
+      final value = '${ramMatch.group(1)} GB';
+      for (final key in ['phone_ram', 'notebook_ram', 'pc_ram']) {
+        final controller = _specControllerFor(key);
+        if (controller.text.trim().isEmpty) {
+          _setControllerTextFromAi(controller, value);
+        }
+      }
+    }
+  }
+
+  String _shortAiError(Object error) {
+    final text = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.length <= 220) return text;
+    return '${text.substring(0, 220)}...';
+  }
+
+  Future<void> _loadPriceSuggestion() async {
+    if (_isBuyRequest) return;
+    if (_isPropertyProduct || _isJobCategory) {
+      if (mounted) {
+        setState(() => _priceSuggestion = null);
+      }
+      return;
+    }
+    final title = _titleCtrl.text.trim();
+    if (title.length < 3) return;
+
+    final user = context.read<UserProvider>().user;
+    if (user == null) return;
+
+    final selectedStore = _availableStores.cast<StoreModel?>().firstWhere(
+          (store) => store?.id == _selectedStoreId,
+          orElse: () => null,
+        );
+    final location = selectedStore != null
+        ? _locationLabelFromParts(
+            selectedStore.address.city,
+            selectedStore.address.state,
+          )
+        : _locationLabelFromParts(user.address.city, user.address.state);
+
+    setState(() => _isLoadingPriceSuggestion = true);
+    try {
+      final customAttributes = _buildCustomAttributes();
+      final vehicleYear = int.tryParse(_vehicleYearCtrl.text.trim());
+      final km = int.tryParse(_kmCtrl.text.replaceAll('.', ''));
+      final propertyArea = double.tryParse(
+        _propertyAreaCtrl.text.trim().replaceAll(',', '.'),
+      );
+      final propertyBedrooms = int.tryParse(_propertyBedroomsCtrl.text.trim());
+      final resolvedCategoryType = _selectedCategoryType == 'Outro'
+          ? _customCategoryTypeLabel
+          : _selectedCategoryType;
+
+      final internalFuture = _firestore.suggestAdPrice(
+        title: title,
+        type: _selectedType,
+        category: _selectedCategory,
+        categoryType: resolvedCategoryType,
+        location: location,
+        lat: selectedStore?.address.lat ?? user.address.lat,
+        lng: selectedStore?.address.lng ?? user.address.lng,
+        servicePriceType: _selectedType == AdModel.serviceType
+            ? _selectedServicePricing
+            : null,
+        propertyOfferType:
+            _isPropertyProduct ? _selectedPropertyOfferType : null,
+        customAttributes: customAttributes,
+        vehicleYear: vehicleYear,
+        km: km,
+        propertyArea: propertyArea,
+        propertyBedrooms: propertyBedrooms,
+      );
+      final externalFuture = _externalMarketPriceService.suggestPrice(
+        title: title,
+        category: _selectedCategory,
+        categoryType: resolvedCategoryType,
+        customAttributes: customAttributes,
+        searchTerms: _lastAiPriceSearchTerms,
+        vehicleBrand: _vehicleBrandCtrl.text.trim(),
+        vehicleModel: _vehicleModelCtrl.text.trim(),
+        vehicleYear: vehicleYear,
+        km: km,
+      );
+      final internalSuggestion = await internalFuture;
+      final externalSuggestion = await externalFuture;
+      final suggestion = _mergePriceSuggestions(
+        internal: internalSuggestion,
+        external: externalSuggestion,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _priceSuggestion = suggestion;
+        if (suggestion != null && _priceCtrl.text.trim().isEmpty) {
+          _applySuggestedPrice(suggestion.idealPrice);
+          _priceWasAutoFilled = true;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _priceSuggestion = null);
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingPriceSuggestion = false);
+    }
+  }
+
+  void _applySuggestedPrice(double value) {
+    final formatted = AdModel.formatCurrency(value).replaceFirst('R\$ ', '');
+    _priceCtrl.value = TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+
+  double _priceSuggestionPosition(double? currentPrice) {
+    final suggestion = _priceSuggestion;
+    if (suggestion == null || currentPrice == null || currentPrice <= 0) {
+      return 0.5;
+    }
+    if (suggestion.maxPrice <= suggestion.minPrice) return 0.5;
+    final normalized = (currentPrice - suggestion.minPrice) /
+        (suggestion.maxPrice - suggestion.minPrice);
+    return normalized.clamp(0.0, 1.0);
+  }
+
+  String _priceTemperatureLabel(double? currentPrice) {
+    final suggestion = _priceSuggestion;
+    if (suggestion == null || currentPrice == null || currentPrice <= 0) {
+      return 'Aguardando valor';
+    }
+    if (currentPrice < suggestion.minPrice) return 'Muito barato';
+    if (currentPrice > suggestion.maxPrice) return 'Muito caro';
+    final tolerance = (suggestion.maxPrice - suggestion.minPrice) * 0.14;
+    if ((currentPrice - suggestion.idealPrice).abs() <= tolerance) {
+      return 'Ideal';
+    }
+    return currentPrice < suggestion.idealPrice
+        ? 'Abaixo do ideal'
+        : 'Acima do ideal';
+  }
+
+  AdPriceSuggestion? _mergePriceSuggestions({
+    required AdPriceSuggestion? internal,
+    required AdPriceSuggestion? external,
+  }) {
+    if (external == null) return internal;
+    if (internal == null) return external;
+
+    if (external.sourceLabel == 'FIPE') {
+      final diffRatio = (internal.idealPrice - external.idealPrice).abs() /
+          external.idealPrice;
+      if (internal.sampleSize >= 4 && diffRatio <= 0.12) {
+        return AdPriceSuggestion(
+          idealPrice:
+              ((external.idealPrice * 0.78) + (internal.idealPrice * 0.22)),
+          minPrice: math.min(external.minPrice, internal.minPrice),
+          maxPrice: math.max(external.maxPrice, internal.maxPrice),
+          sampleSize: internal.sampleSize,
+          confidence: 'boa',
+          usedLocalMatches: true,
+          sourceLabel: 'FIPE + MarketView',
+          note: 'FIPE ajustada pelos anúncios parecidos do MarketView',
+        );
+      }
+      return external;
+    }
+
+    if (internal.sampleSize >= 5) {
+      final diffRatio = (internal.idealPrice - external.idealPrice).abs() /
+          external.idealPrice;
+      if (diffRatio <= 0.18) {
+        return AdPriceSuggestion(
+          idealPrice:
+              ((external.idealPrice * 0.62) + (internal.idealPrice * 0.38)),
+          minPrice: math.min(external.minPrice, internal.minPrice),
+          maxPrice: math.max(external.maxPrice, internal.maxPrice),
+          sampleSize: internal.sampleSize,
+          confidence:
+              external.confidence == 'boa' || internal.confidence == 'boa'
+                  ? 'boa'
+                  : 'media',
+          usedLocalMatches: true,
+          sourceLabel: 'Web + MarketView',
+          note: 'Busca externa combinada com anúncios parecidos do MarketView',
+        );
+      }
+    }
+
+    return external;
   }
 
   Future<void> _prevStep() async {
@@ -884,7 +1613,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   }
 
   Future<void> _pickImages() async {
-    final remaining = 10 - _images.length;
+    final remaining = _maxAdPhotos - _images.length;
     if (remaining <= 0) return;
 
     final files = await _cloudinary.pickImagesFromGallery(
@@ -943,6 +1672,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       final imageUrls = <String>[];
       final imagePublicIds = <String>[];
       var failedImageUploads = 0;
+      if (_images.isNotEmpty && !_cloudinary.isConfigured) {
+        throw Exception(
+          'Cloudinary nao configurado. Informe CLOUDINARY_CLOUD_NAME e CLOUDINARY_UPLOAD_PRESET para enviar imagens.',
+        );
+      }
       for (var i = 0; i < _images.length; i++) {
         final result = await _cloudinary.uploadAdPhotoFull(adId, _images[i], i);
         if (result != null &&
@@ -953,12 +1687,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           continue;
         }
 
-        final firebaseUrl = await _storage.uploadAdPhoto(adId, _images[i], i);
-        if (firebaseUrl != null && firebaseUrl.trim().isNotEmpty) {
-          imageUrls.add(firebaseUrl);
-        } else {
-          failedImageUploads++;
-        }
+        failedImageUploads++;
       }
 
       final price = _parseCurrency(_priceCtrl.text) ?? 0.0;
@@ -1042,6 +1771,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         propertyFurnishing:
             _isPropertyProduct ? _selectedPropertyFurnishing : null,
         customAttributes: _buildCustomAttributes(),
+        aiSuggestedPrice: _priceSuggestion?.idealPrice,
+        aiSuggestedMinPrice: _priceSuggestion?.minPrice,
+        aiSuggestedMaxPrice: _priceSuggestion?.maxPrice,
+        aiPriceConfidence: _priceSuggestion?.confidence,
+        aiPriceSampleSize: _priceSuggestion?.sampleSize,
         vehicleBrand:
             _needsVehicleDetailsStep ? _vehicleBrandCtrl.text.trim() : null,
         vehicleModel:
@@ -1049,6 +1783,8 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         vehicleYear: _needsVehicleDetailsStep
             ? int.tryParse(_vehicleYearCtrl.text.trim())
             : null,
+        vehicleEngine:
+            _needsVehicleDetailsStep ? _vehicleEngineCtrl.text.trim() : null,
         vehicleOptionals: _needsVehicleDetailsStep
             ? List<String>.from(_selectedVehicleOptionals)
             : const [],
@@ -1065,11 +1801,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       context.read<UserProvider>().notifyMarketplaceChanged();
       _showMessage(_isBuyRequest
           ? (failedImageUploads == 0
-              ? 'Solicitacao publicada com sucesso!'
-              : 'Solicitacao publicada, mas $failedImageUploads imagem(ns) falharam no upload.')
+              ? 'Solicitação publicada com sucesso!'
+              : 'Solicitação publicada, mas $failedImageUploads imagem(ns) falharam no upload.')
           : (failedImageUploads == 0
-              ? 'Anuncio publicado com sucesso!'
-              : 'Anuncio publicado, mas $failedImageUploads imagem(ns) falharam no upload.'));
+              ? 'Anúncio publicado com sucesso!'
+              : 'Anúncio publicado, mas $failedImageUploads imagem(ns) falharam no upload.'));
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -1218,65 +1954,98 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     bool enabled,
   ) {
     final selected = _selectedAccount == value;
+    final fillColor = selected
+        ? AppTheme.facebookBlue.withValues(alpha: isDark ? 0.16 : 0.08)
+        : (isDark ? AppTheme.blackLight : Colors.white);
+    final borderColor = selected
+        ? AppTheme.facebookBlue
+        : (isDark ? AppTheme.blackBorder : Colors.grey.shade200);
     return Opacity(
       opacity: enabled ? 1 : 0.45,
-      child: InkWell(
-        onTap: enabled
-            ? () => setState(() {
-                  _selectedAccount = value;
-                  if (value == 'personal') _selectedStoreId = null;
-                })
-            : null,
-        borderRadius: BorderRadius.circular(16),
-        child: Ink(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: selected
-                ? AppTheme.facebookBlue.withValues(alpha: 0.08)
-                : (isDark ? AppTheme.blackLight : Colors.white),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: selected
-                  ? AppTheme.facebookBlue
-                  : (isDark ? AppTheme.blackBorder : Colors.grey.shade200),
-              width: 2,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled
+              ? () => setState(() {
+                    _selectedAccount = value;
+                    if (value == 'personal') _selectedStoreId = null;
+                  })
+              : null,
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: BorderRadius.circular(20),
+              border:
+                  Border.all(color: borderColor, width: selected ? 1.8 : 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: selected
+                      ? AppTheme.facebookBlue.withValues(alpha: 0.10)
+                      : Colors.black.withValues(alpha: isDark ? 0.12 : 0.04),
+                  blurRadius: selected ? 20 : 12,
+                  offset: const Offset(0, 8),
+                ),
+              ],
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 30,
-                color: selected ? AppTheme.facebookBlue : Colors.grey,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: GoogleFonts.roboto(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: GoogleFonts.roboto(
-                        color: Colors.grey,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppTheme.facebookBlue.withValues(alpha: 0.14)
+                        : (isDark
+                            ? Colors.white.withValues(alpha: 0.06)
+                            : Colors.grey.shade100),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 24,
+                    color:
+                        selected ? AppTheme.facebookBlue : Colors.grey.shade600,
+                  ),
                 ),
-              ),
-              if (selected)
-                const Icon(
-                  Icons.check_circle_rounded,
-                  color: AppTheme.facebookBlue,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.roboto(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: GoogleFonts.roboto(
+                          color: isDark ? Colors.white60 : Colors.black54,
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-            ],
+                AnimatedOpacity(
+                  opacity: selected ? 1 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: const Icon(
+                    Icons.check_circle_rounded,
+                    color: AppTheme.facebookBlue,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1424,37 +2193,68 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
 
   Widget _typeOption(String value, String label, IconData icon, bool isDark) {
     final selected = _selectedType == value;
-    return InkWell(
-      onTap: () => _handleTypeChange(value),
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: selected
-              ? AppTheme.facebookBlue.withValues(alpha: 0.08)
-              : (isDark ? AppTheme.blackLight : Colors.white),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _handleTypeChange(value),
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
             color: selected
-                ? AppTheme.facebookBlue
-                : (isDark ? AppTheme.blackBorder : Colors.grey.shade200),
-            width: 2,
+                ? AppTheme.facebookBlue.withValues(alpha: isDark ? 0.16 : 0.08)
+                : (isDark ? AppTheme.blackLight : Colors.white),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected
+                  ? AppTheme.facebookBlue
+                  : (isDark ? AppTheme.blackBorder : Colors.grey.shade200),
+              width: selected ? 1.8 : 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: selected
+                    ? AppTheme.facebookBlue.withValues(alpha: 0.10)
+                    : Colors.black.withValues(alpha: isDark ? 0.10 : 0.04),
+                blurRadius: selected ? 18 : 10,
+                offset: const Offset(0, 7),
+              ),
+            ],
           ),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: selected ? AppTheme.facebookBlue : Colors.grey),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                style: GoogleFonts.roboto(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppTheme.facebookBlue.withValues(alpha: 0.14)
+                      : (isDark
+                          ? Colors.white.withValues(alpha: 0.06)
+                          : Colors.grey.shade100),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  icon,
+                  color:
+                      selected ? AppTheme.facebookBlue : Colors.grey.shade600,
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  label,
+                  style: GoogleFonts.roboto(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1475,19 +2275,21 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
 
     return InkWell(
       onTap: () => _handleListingFlowChange(option.id),
-      borderRadius: BorderRadius.circular(20),
-      child: Ink(
+      borderRadius: BorderRadius.circular(22),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
         padding: EdgeInsets.all(isWide ? 18 : 16),
         decoration: BoxDecoration(
           color: backgroundColor,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: borderColor, width: 2),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: borderColor, width: selected ? 1.8 : 1.2),
           boxShadow: [
             BoxShadow(
               color: selected
                   ? AppTheme.facebookBlue.withValues(alpha: 0.12)
                   : Colors.black.withValues(alpha: isDark ? 0.12 : 0.04),
-              blurRadius: selected ? 18 : 10,
+              blurRadius: selected ? 18 : 12,
               offset: const Offset(0, 8),
             ),
           ],
@@ -1556,6 +2358,31 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     );
   }
 
+  Widget _stepTitle(bool isDark) {
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        _title('Dê um título ao seu produto', isDark),
+        const SizedBox(height: 8),
+        _subtitle(
+          'Escreva do seu jeito. A IA vai organizar o título e preparar os detalhes na próxima tela.',
+        ),
+        const SizedBox(height: 24),
+        _field(
+          _titleCtrl,
+          'Título do produto',
+          _titleHint(),
+          isDark,
+          keyboardType: TextInputType.text,
+        ),
+        if (_isDraftAiLoading || _draftAiStatus != null) ...[
+          const SizedBox(height: 12),
+          _marketViewAiStatusLine(isDark),
+        ],
+      ],
+    );
+  }
+
   Widget _stepInfo(bool isDark) {
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -1571,6 +2398,10 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           _titleHint(),
           isDark,
         ),
+        if (_hasAiDraftSuggestion) ...[
+          const SizedBox(height: 14),
+          _marketViewAiGeneratedBanner(isDark),
+        ],
         const SizedBox(height: 18),
         _field(
           _descCtrl,
@@ -1579,6 +2410,10 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           isDark,
           maxLines: 4,
         ),
+        if (_isDraftAiLoading || _draftAiStatus != null) ...[
+          const SizedBox(height: 12),
+          _marketViewAiStatusLine(isDark),
+        ],
         const SizedBox(height: 18),
         _categoryDropdown(isDark),
         if (_availableCategoryTypes.isNotEmpty) ...[
@@ -1662,6 +2497,946 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     );
   }
 
+  // ignore: unused_element
+  Widget _marketViewAiLoadingCard(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackLight : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.facebookBlue.withValues(alpha: 0.22),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.facebookBlue.withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppTheme.facebookBlue.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.auto_awesome_rounded,
+              color: AppTheme.facebookBlue,
+            ),
+          )
+              .animate(onPlay: (controller) => controller.repeat(reverse: true))
+              .scale(
+                begin: const Offset(0.92, 0.92),
+                end: const Offset(1.08, 1.08),
+                duration: 700.ms,
+                curve: Curves.easeInOut,
+              ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'MarketView IA',
+                  style: GoogleFonts.roboto(
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Organizando título, descrição e detalhes...',
+                  style: GoogleFonts.roboto(
+                    fontSize: 13,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 220.ms).slideY(begin: 0.08, end: 0);
+  }
+
+  Widget _marketViewAiGeneratedBanner(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.facebookBlue.withValues(alpha: isDark ? 0.16 : 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppTheme.facebookBlue.withValues(alpha: 0.20),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.auto_awesome_rounded,
+            color: AppTheme.facebookBlue,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Gerado pela MarketView IA. Você pode editar tudo.',
+              style: GoogleFonts.roboto(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 260.ms).slideY(begin: -0.06, end: 0);
+  }
+
+  Widget _marketViewAiStatusLine(bool isDark) {
+    final isLoading = _isDraftAiLoading;
+    final text = isLoading
+        ? 'IA analisando o titulo e a descricao...'
+        : (_draftAiStatus ?? '');
+    final debugError = !isLoading && kDebugMode ? _draftAiDebugError : null;
+    final color = isLoading
+        ? AppTheme.facebookBlue
+        : (isDark ? Colors.white60 : Colors.black54);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            if (isLoading)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppTheme.facebookBlue,
+                ),
+              )
+            else
+              Icon(
+                Icons.info_outline_rounded,
+                size: 16,
+                color: color,
+              ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: GoogleFonts.roboto(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (debugError != null && debugError.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            debugError,
+            style: GoogleFonts.roboto(
+              fontSize: 11.5,
+              color: isDark ? Colors.white54 : Colors.black45,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ignore: unused_element
+  Widget _marketViewAiUnavailableBanner(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFC266)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(
+              Icons.key_off_rounded,
+              color: Color(0xFFB26A00),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'MarketView IA esta desativada nesta execucao do app. Rode o app com a GEMINI_API_KEY para reativar titulo, descricao, categoria e preco sugerido.',
+              style: GoogleFonts.roboto(
+                fontSize: 12.8,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+                color: isDark ? Colors.black87 : const Color(0xFF8A5200),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 220.ms).slideY(begin: -0.04, end: 0);
+  }
+
+  Widget _priceSuggestionLoadingCard(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackLight : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.facebookBlue.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.4,
+              color: AppTheme.facebookBlue,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Analisando anúncios parecidos para sugerir um preço...',
+              style: GoogleFonts.roboto(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _priceInputPanel(bool isDark) {
+    final surfaceColor = isDark ? AppTheme.blackLight : Colors.white;
+    final strokeColor = isDark ? AppTheme.blackBorder : const Color(0xFFE7ECF3);
+    final aiColor = isDark ? const Color(0xFF67E8F9) : const Color(0xFF0EA5E9);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: surfaceColor,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: strokeColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.12 : 0.04),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _priceLabel(),
+                      style: GoogleFonts.roboto(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                        color: isDark ? Colors.white70 : Colors.black54,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: aiColor.withValues(alpha: isDark ? 0.16 : 0.10),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: aiColor.withValues(alpha: 0.26),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.auto_awesome_rounded,
+                          size: 15,
+                          color: aiColor,
+                        )
+                            .animate(
+                                onPlay: (controller) => controller.repeat())
+                            .fadeIn(duration: 700.ms)
+                            .then()
+                            .fadeOut(duration: 700.ms),
+                        const SizedBox(width: 6),
+                        Text(
+                          'IA',
+                          style: GoogleFonts.roboto(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            color: aiColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _priceCtrl,
+                keyboardType: TextInputType.number,
+                style: GoogleFonts.roboto(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w800,
+                ),
+                decoration: InputDecoration(
+                  hintText: '0,00',
+                  hintStyle: GoogleFonts.roboto(
+                    color: isDark ? Colors.white38 : Colors.grey.shade500,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  prefixText: 'R\$ ',
+                  prefixStyle: GoogleFonts.roboto(
+                    color: isDark ? Colors.white60 : Colors.grey.shade700,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  filled: true,
+                  fillColor:
+                      isDark ? AppTheme.blackCard : const Color(0xFFF9FBFD),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 20,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: BorderSide(
+                      color: strokeColor,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: const BorderSide(
+                      color: Color(0xFF0EA5E9),
+                      width: 1.6,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: 3,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: LinearGradient(
+                          colors: [
+                            aiColor.withValues(alpha: 0.22),
+                            aiColor,
+                            aiColor.withValues(alpha: 0.22),
+                          ],
+                        ),
+                      ),
+                    )
+                        .animate(onPlay: (controller) => controller.repeat())
+                        .shimmer(duration: 1600.ms, color: Colors.white24),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (_priceSuggestion != null) ...[
+          const SizedBox(height: 12),
+        ],
+        if (_isLoadingPriceSuggestion) ...[
+          const SizedBox(height: 14),
+          _priceSuggestionLoadingCard(isDark)
+              .animate()
+              .fadeIn(duration: 220.ms)
+              .slideY(begin: 0.06, end: 0),
+        ],
+        if (_priceSuggestion != null) ...[
+          const SizedBox(height: 18),
+          _priceSuggestionInsights(isDark),
+        ],
+      ],
+    );
+  }
+
+  Widget _priceSuggestionInsights(bool isDark) {
+    final suggestion = _priceSuggestion!;
+    final currentPrice = _parseCurrency(_priceCtrl.text);
+    final indicator = _priceSuggestionPosition(currentPrice);
+    final label = _priceTemperatureLabel(currentPrice);
+    final confidenceText = switch (suggestion.confidence) {
+      'boa' => 'Boa confiança',
+      'media' => 'Confiança média',
+      _ => 'Baixa confiança',
+    };
+    final barColors = [
+      const Color(0xFF0EA5E9),
+      const Color(0xFF34D399),
+      const Color(0xFFFBBF24),
+      const Color(0xFFF97316),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.facebookBlue.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                suggestion.sampleSize > 0
+                    ? '${suggestion.sampleSize} anúncios'
+                    : confidenceText,
+                style: GoogleFonts.roboto(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.facebookBlue,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.roboto(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _applySuggestedPrice(suggestion.idealPrice);
+                  _priceWasAutoFilled = true;
+                });
+              },
+              child: const Text('Usar ideal'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            const knobSize = 22.0;
+            final left = (width - knobSize) * indicator;
+            return SizedBox(
+              height: 76,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 24,
+                    child: Container(
+                      height: 16,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: barColors,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                const Color(0xFF0EA5E9).withValues(alpha: 0.18),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 280),
+                    curve: Curves.easeOutCubic,
+                    left: left.clamp(0.0, math.max(0, width - knobSize)),
+                    top: 18,
+                    child: Container(
+                      width: knobSize,
+                      height: knobSize,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFF0F172A),
+                          width: 3,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.16),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Text(
+                        label,
+                        style: GoogleFonts.roboto(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    bottom: 0,
+                    child: Text(
+                      'Muito barato',
+                      style: GoogleFonts.roboto(
+                        fontSize: 11.5,
+                        color: isDark ? Colors.white70 : Colors.black54,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: Text(
+                        'Ideal',
+                        style: GoogleFonts.roboto(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: isDark ? Colors.white70 : Colors.black54,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Text(
+                      'Muito caro',
+                      style: GoogleFonts.roboto(
+                        fontSize: 11.5,
+                        color: isDark ? Colors.white70 : Colors.black54,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _priceRangeTile(
+                title: 'Faixa baixa',
+                value: AdModel.formatCurrency(suggestion.minPrice),
+                isDark: isDark,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _priceRangeTile(
+                title: 'Faixa alta',
+                value: AdModel.formatCurrency(suggestion.maxPrice),
+                isDark: isDark,
+              ),
+            ),
+          ],
+        ),
+        if (_priceWasAutoFilled) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Preenchemos o valor inicial para você editar se quiser.',
+            style: GoogleFonts.roboto(
+              fontSize: 12.5,
+              color: isDark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+        ],
+      ],
+    ).animate().fadeIn(duration: 220.ms).slideY(begin: 0.03, end: 0);
+  }
+
+  // ignore: unused_element
+  Widget _priceSuggestionCard(bool isDark) {
+    final suggestion = _priceSuggestion!;
+    final currentPrice = _parseCurrency(_priceCtrl.text);
+    final indicator = _priceSuggestionPosition(currentPrice);
+    final label = _priceTemperatureLabel(currentPrice);
+    final confidenceText = switch (suggestion.confidence) {
+      'boa' => 'Boa confiança',
+      'media' => 'Confiança média',
+      _ => 'Baixa confiança',
+    };
+    final barColors = [
+      const Color(0xFF36CFC9),
+      const Color(0xFFF6C445),
+      const Color(0xFFFF8A5B),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackLight : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppTheme.facebookBlue.withValues(alpha: 0.18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color:
+                AppTheme.facebookBlue.withValues(alpha: isDark ? 0.10 : 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppTheme.facebookBlue.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.insights_rounded,
+                  color: AppTheme.facebookBlue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Preço sugerido pela MarketView IA',
+                      style: GoogleFonts.roboto(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$confidenceText • ${suggestion.sampleSize} anúncios parecidos',
+                      style: GoogleFonts.roboto(
+                        fontSize: 12.5,
+                        color: isDark ? Colors.white70 : Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Preço ideal',
+                      style: GoogleFonts.roboto(
+                        fontSize: 12.5,
+                        color: isDark ? Colors.white70 : Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      AdModel.formatCurrency(suggestion.idealPrice),
+                      style: GoogleFonts.roboto(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              FilledButton.tonal(
+                onPressed: () {
+                  setState(() {
+                    _applySuggestedPrice(suggestion.idealPrice);
+                    _priceWasAutoFilled = true;
+                  });
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor:
+                      AppTheme.facebookBlue.withValues(alpha: 0.12),
+                  foregroundColor: AppTheme.facebookBlue,
+                ),
+                child: const Text('Usar sugestão'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Vender no preço ideal tende a acelerar a venda.',
+            style: GoogleFonts.roboto(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              const knobSize = 18.0;
+              final left = (width - knobSize) * indicator;
+              return SizedBox(
+                height: 58,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: 16,
+                      child: Container(
+                        height: 12,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          gradient: LinearGradient(colors: barColors),
+                        ),
+                      ),
+                    ),
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOutCubic,
+                      left: left.clamp(0.0, math.max(0, width - knobSize)),
+                      top: 12,
+                      child: Container(
+                        width: knobSize,
+                        height: knobSize,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppTheme.facebookBlue,
+                            width: 3,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.12),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark ? AppTheme.blackCard : Colors.white,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color:
+                                  AppTheme.facebookBlue.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          child: Text(
+                            label,
+                            style: GoogleFonts.roboto(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: isDark ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      bottom: 0,
+                      child: Text(
+                        'Muito barato',
+                        style: GoogleFonts.roboto(
+                          fontSize: 11.5,
+                          color: isDark ? Colors.white70 : Colors.black54,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: Text(
+                          'Ideal',
+                          style: GoogleFonts.roboto(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? Colors.white70 : Colors.black54,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Text(
+                        'Muito caro',
+                        style: GoogleFonts.roboto(
+                          fontSize: 11.5,
+                          color: isDark ? Colors.white70 : Colors.black54,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _priceRangeTile(
+                  title: 'Faixa baixa',
+                  value: AdModel.formatCurrency(suggestion.minPrice),
+                  isDark: isDark,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _priceRangeTile(
+                  title: 'Faixa alta',
+                  value: AdModel.formatCurrency(suggestion.maxPrice),
+                  isDark: isDark,
+                ),
+              ),
+            ],
+          ),
+          if (_priceWasAutoFilled) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Preenchemos o valor inicial para você editar se quiser.',
+              style: GoogleFonts.roboto(
+                fontSize: 12.5,
+                color: isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+          ],
+        ],
+      ),
+    ).animate().fadeIn(duration: 240.ms).slideY(begin: 0.05, end: 0);
+  }
+
+  Widget _priceRangeTile({
+    required String title,
+    required String value,
+    required bool isDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackCard : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? AppTheme.blackBorder : Colors.grey.shade200,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.10 : 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.roboto(
+              fontSize: 12,
+              color: isDark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: GoogleFonts.roboto(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: isDark ? Colors.white : Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _stepVehicleDetails(bool isDark) {
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -1681,6 +3456,13 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         const SizedBox(height: 18),
         _field(_vehicleYearCtrl, 'Ano', 'Ex: 2020', isDark,
             keyboardType: TextInputType.number),
+        const SizedBox(height: 18),
+        _field(
+          _vehicleEngineCtrl,
+          'Motorização',
+          'Ex: 2.0, 1.6 ou 1.0 turbo',
+          isDark,
+        ),
         const SizedBox(height: 18),
         _field(
             _vehicleOwnerCountCtrl, 'Número de proprietários', 'Ex: 1', isDark,
@@ -1822,19 +3604,17 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
                 (entry) => entry.value == value,
                 orElse: () => MapEntry(AdModel.servicePriceFixed, value),
               );
-              setState(() => _selectedServicePricing = selectedEntry.key);
+              setState(() {
+                _selectedServicePricing = selectedEntry.key;
+                _priceSuggestion = null;
+                _priceWasAutoFilled = false;
+              });
             },
             allowWrapScroll: true,
           ),
         ],
         const SizedBox(height: 24),
-        _field(
-          _priceCtrl,
-          _priceLabel(),
-          '0,00',
-          isDark,
-          keyboardType: TextInputType.number,
-        ),
+        _priceInputPanel(isDark),
         if (_showsServicePricingModes &&
             _selectedServicePricing == AdModel.servicePriceFixedPlusHourly) ...[
           const SizedBox(height: 18),
@@ -2005,6 +3785,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   }
 
   Widget _stepPhotos(bool isDark) {
+    final canAddMore = _images.length < _maxAdPhotos;
+    final selectedIndex =
+        _images.isEmpty ? 0 : _photoPreviewIndex.clamp(0, _images.length - 1);
+    final selectedImage = _images.isEmpty ? null : _images[selectedIndex];
+
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
@@ -2015,69 +3800,392 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         const SizedBox(height: 8),
         _subtitle(
           _isBuyRequest
-              ? 'Adicione até 10 imagens para mostrar referência do que procura.'
-              : 'Adicione até 10 fotos pela galeria.',
+              ? 'Adicione até $_maxAdPhotos imagens para mostrar referências do que você procura.'
+              : 'Adicione até $_maxAdPhotos fotos pela galeria.',
         ),
         const SizedBox(height: 24),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            ..._images.asMap().entries.map(
-                  (entry) => GestureDetector(
-                    onTap: () => _cropImageAt(entry.key),
-                    child: Stack(
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.blackLight : Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+              color: isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.14 : 0.05),
+                blurRadius: 22,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _images.isEmpty
+                          ? 'Nenhuma foto adicionada'
+                          : '${_images.length}/$_maxAdPhotos ${_isBuyRequest ? 'referências' : 'fotos'}',
+                      style: GoogleFonts.roboto(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ),
+                  if (_images.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: canAddMore ? _pickImages : null,
+                      icon: const Icon(Icons.add_photo_alternate_outlined,
+                          size: 18),
+                      label: const Text('Adicionar'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _images.isEmpty
+                    ? 'Escolha imagens para montar uma prévia fiel de como o anúncio será exibido.'
+                    : 'Arraste para os lados para trocar a foto principal. Toque para editar e use o X para remover.',
+                style: GoogleFonts.roboto(
+                  fontSize: 12.5,
+                  height: 1.35,
+                  color: isDark ? Colors.white60 : Colors.black54,
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_images.isEmpty)
+                InkWell(
+                  onTap: _pickImages,
+                  borderRadius: BorderRadius.circular(18),
+                  child: Ink(
+                    height: 180,
+                    decoration: BoxDecoration(
+                      color: isDark ? AppTheme.blackCard : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: isDark
+                            ? AppTheme.blackBorder
+                            : Colors.grey.shade300,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.file(
-                            entry.value,
-                            width: 100,
-                            height: 100,
-                            fit: BoxFit.cover,
+                        Icon(
+                          _isBuyRequest
+                              ? Icons.add_photo_alternate_outlined
+                              : Icons.add_a_photo_outlined,
+                          color: AppTheme.facebookBlue,
+                          size: 34,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Adicionar fotos',
+                          style: GoogleFonts.roboto(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: isDark ? Colors.white : Colors.black87,
                           ),
                         ),
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: InkWell(
-                            onTap: () =>
-                                setState(() => _images.removeAt(entry.key)),
-                            child: const CircleAvatar(
-                              radius: 12,
-                              backgroundColor: Colors.black54,
-                              child: Icon(Icons.close, size: 14),
-                            ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Galeria • até $_maxAdPhotos imagens',
+                          style: GoogleFonts.roboto(
+                            fontSize: 12.5,
+                            color: isDark ? Colors.white60 : Colors.black54,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-            if (_images.length < 10)
-              InkWell(
-                onTap: _pickImages,
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color:
-                          isDark ? AppTheme.blackBorder : Colors.grey.shade300,
+                )
+              else ...[
+                GestureDetector(
+                  onHorizontalDragEnd: (details) {
+                    final velocity = details.primaryVelocity ?? 0;
+                    if (velocity < -80) {
+                      _changePhotoPreviewBy(1);
+                    } else if (velocity > 80) {
+                      _changePhotoPreviewBy(-1);
+                    }
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: isDark
+                            ? AppTheme.blackBorder
+                            : const Color(0xFFE2E8F0),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black
+                              .withValues(alpha: isDark ? 0.12 : 0.05),
+                          blurRadius: 16,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: AspectRatio(
+                        aspectRatio: 1.06,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 240),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeOutCubic,
+                              transitionBuilder: (child, animation) {
+                                final offsetAnimation = Tween<Offset>(
+                                  begin: const Offset(0.08, 0),
+                                  end: Offset.zero,
+                                ).animate(animation);
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: SlideTransition(
+                                    position: offsetAnimation,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: Image.file(
+                                selectedImage!,
+                                key: ValueKey(selectedImage.path),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.10),
+                                    Colors.transparent,
+                                    Colors.black.withValues(alpha: 0.42),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 14,
+                              left: 14,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.50),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  'Prévia do anúncio',
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (_images.length > 1)
+                              Positioned(
+                                left: 14,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.chevron_left_rounded,
+                                    size: 30,
+                                    color: Colors.white.withValues(alpha: 0.78),
+                                  ),
+                                ),
+                              ),
+                            if (_images.length > 1)
+                              Positioned(
+                                right: 14,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.chevron_right_rounded,
+                                    size: 30,
+                                    color: Colors.white.withValues(alpha: 0.78),
+                                  ),
+                                ),
+                              ),
+                            Positioned(
+                              top: 14,
+                              right: 14,
+                              child: InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _images.removeAt(selectedIndex);
+                                    if (_photoPreviewIndex >= _images.length) {
+                                      _photoPreviewIndex =
+                                          math.max(0, _images.length - 1);
+                                    }
+                                  });
+                                },
+                                borderRadius: BorderRadius.circular(999),
+                                child: Container(
+                                  width: 38,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.55),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              left: 14,
+                              right: 14,
+                              bottom: 14,
+                              child: FilledButton.icon(
+                                onPressed: () => _cropImageAt(selectedIndex),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor:
+                                      Colors.black.withValues(alpha: 0.54),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.tune_rounded, size: 18),
+                                label: const Text('Editar foto'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                  child: Icon(
-                    _isBuyRequest
-                        ? Icons.add_photo_alternate_outlined
-                        : Icons.add_a_photo_outlined,
-                    color: AppTheme.facebookBlue,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 94,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _images.length + (canAddMore ? 1 : 0),
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      if (index == _images.length) {
+                        return InkWell(
+                          onTap: _pickImages,
+                          borderRadius: BorderRadius.circular(18),
+                          child: Container(
+                            width: 82,
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? AppTheme.blackCard
+                                  : Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: isDark
+                                    ? AppTheme.blackBorder
+                                    : Colors.grey.shade300,
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                  color: AppTheme.facebookBlue,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Adicionar',
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color:
+                                        isDark ? Colors.white : Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+
+                      final image = _images[index];
+                      final isSelected = index == selectedIndex;
+                      return InkWell(
+                        onTap: () => setState(() => _photoPreviewIndex = index),
+                        borderRadius: BorderRadius.circular(18),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          width: 82,
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: isDark ? AppTheme.blackCard : Colors.white,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppTheme.facebookBlue
+                                  : (isDark
+                                      ? AppTheme.blackBorder
+                                      : Colors.grey.shade300),
+                              width: isSelected ? 2 : 1,
+                            ),
+                            boxShadow: isSelected
+                                ? [
+                                    BoxShadow(
+                                      color: AppTheme.facebookBlue
+                                          .withValues(alpha: 0.18),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.file(image, fit: BoxFit.cover),
+                                if (isSelected)
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.92),
+                                        width: 2,
+                                      ),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
-              ),
-          ],
+              ],
+            ],
+          ),
         ),
       ],
     );
@@ -2141,6 +4249,7 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       vehicleBrand: _vehicleBrandCtrl.text.trim(),
       vehicleModel: _vehicleModelCtrl.text.trim(),
       vehicleYear: int.tryParse(_vehicleYearCtrl.text.trim()),
+      vehicleEngine: _vehicleEngineCtrl.text.trim(),
       vehicleOptionals: List<String>.from(_selectedVehicleOptionals),
       vehicleColor: _selectedVehicleColor,
       vehicleFuelType: _selectedVehicleFuelType,
@@ -2392,7 +4501,11 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   Future<void> _handlePropertyOfferTypeChange(String value) async {
     if (value == _selectedPropertyOfferType) return;
 
-    setState(() => _selectedPropertyOfferType = value);
+    setState(() {
+      _selectedPropertyOfferType = value;
+      _priceSuggestion = null;
+      _priceWasAutoFilled = false;
+    });
 
     if (value == AdModel.propertyOfferRent) {
       await _showPropertyExtraModeDialog();
@@ -2418,6 +4531,8 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       setState(() {
         _selectedCategoryType = 'Outro';
         _customCategoryTypeLabel = custom;
+        _priceSuggestion = null;
+        _priceWasAutoFilled = false;
       });
       return;
     }
@@ -2425,6 +4540,8 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     setState(() {
       _selectedCategoryType = value;
       _customCategoryTypeLabel = null;
+      _priceSuggestion = null;
+      _priceWasAutoFilled = false;
     });
   }
 
@@ -2570,11 +4687,14 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
         _selectedServicePricing = AdModel.servicePriceFixed;
         _hourlyPriceCtrl.clear();
       }
+      _priceSuggestion = null;
+      _priceWasAutoFilled = false;
       if (!_needsVehicleDetailsStep) {
         _kmCtrl.clear();
         _vehicleBrandCtrl.clear();
         _vehicleModelCtrl.clear();
         _vehicleYearCtrl.clear();
+        _vehicleEngineCtrl.clear();
         _vehicleOwnerCountCtrl.clear();
         _vehicleOptionalCtrl.clear();
         _selectedVehicleOptionals.clear();
@@ -2600,11 +4720,14 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
       _selectedCategory = value;
       _selectedCategoryType = null;
       _customCategoryTypeLabel = null;
+      _priceSuggestion = null;
+      _priceWasAutoFilled = false;
       if (!_needsVehicleDetailsStep) {
         _kmCtrl.clear();
         _vehicleBrandCtrl.clear();
         _vehicleModelCtrl.clear();
         _vehicleYearCtrl.clear();
+        _vehicleEngineCtrl.clear();
         _vehicleOwnerCountCtrl.clear();
         _vehicleOptionalCtrl.clear();
         _selectedVehicleOptionals.clear();
@@ -2631,11 +4754,28 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
           (option) => Padding(
             padding: const EdgeInsets.only(right: 8, bottom: 8),
             child: FilterChip(
-              label: Text(_label(option)),
+              label: Text(
+                _label(option),
+                style: GoogleFonts.roboto(fontWeight: FontWeight.w600),
+              ),
               selected: selectedValues.contains(option),
               onSelected: (_) => onTap(option),
               selectedColor: AppTheme.facebookBlue.withValues(alpha: 0.18),
+              backgroundColor: Theme.of(context).brightness == Brightness.dark
+                  ? AppTheme.blackLight
+                  : Colors.white,
+              side: BorderSide(
+                color: selectedValues.contains(option)
+                    ? AppTheme.facebookBlue
+                    : (Theme.of(context).brightness == Brightness.dark
+                        ? AppTheme.blackBorder
+                        : Colors.grey.shade200),
+              ),
               checkmarkColor: AppTheme.facebookBlue,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             ),
           ),
         )
@@ -2644,7 +4784,16 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: GoogleFonts.roboto(fontWeight: FontWeight.w600)),
+        Text(
+          title,
+          style: GoogleFonts.roboto(
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+            color: Theme.of(context).brightness == Brightness.dark
+                ? Colors.white70
+                : Colors.black54,
+          ),
+        ),
         const SizedBox(height: 10),
         allowWrapScroll
             ? Wrap(children: chips)
@@ -2665,26 +4814,72 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     TextInputType? keyboardType,
     bool enabled = true,
   }) {
+    final fillColor = isDark ? AppTheme.blackLight : Colors.white;
+    final borderColor = isDark ? AppTheme.blackBorder : Colors.grey.shade200;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: GoogleFonts.roboto(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        TextField(
-          controller: controller,
-          enabled: enabled,
-          maxLines: maxLines,
-          keyboardType: keyboardType,
+        Text(
+          label,
           style: GoogleFonts.roboto(
-            color: isDark ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+            color: isDark ? Colors.white70 : Colors.black54,
           ),
-          decoration: InputDecoration(
-            hintText: hint,
-            filled: true,
-            fillColor: isDark ? AppTheme.blackLight : Colors.grey.shade100,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+        ),
+        const SizedBox(height: 8),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: fillColor,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.12 : 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: TextField(
+            controller: controller,
+            enabled: enabled,
+            maxLines: maxLines,
+            keyboardType: keyboardType,
+            style: GoogleFonts.roboto(
+              color: isDark ? Colors.white : Colors.black87,
+              fontSize: 15.5,
+              fontWeight: FontWeight.w600,
+            ),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: GoogleFonts.roboto(
+                color: isDark ? Colors.white38 : Colors.grey.shade500,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 16,
+              ),
+              filled: true,
+              fillColor: Colors.transparent,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide(
+                  color: AppTheme.facebookBlue.withValues(alpha: 0.28),
+                ),
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
+              ),
             ),
           ),
         ),
@@ -2760,25 +4955,41 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
     required VoidCallback onTap,
     Widget? leading,
   }) {
-    final fillColor = isDark ? AppTheme.blackLight : Colors.grey.shade100;
+    final fillColor = isDark ? AppTheme.blackLight : Colors.white;
     final borderColor = isDark ? AppTheme.blackBorder : Colors.grey.shade200;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: GoogleFonts.roboto(fontWeight: FontWeight.w600)),
+        Text(
+          title,
+          style: GoogleFonts.roboto(
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+            color: isDark ? Colors.white70 : Colors.black54,
+          ),
+        ),
         const SizedBox(height: 8),
         Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: onTap,
             borderRadius: BorderRadius.circular(18),
-            child: Ink(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
               decoration: BoxDecoration(
                 color: fillColor,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: borderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.12 : 0.04),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
               ),
               child: Row(
                 children: [
@@ -2791,14 +5002,24 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
                       valueLabel,
                       style: GoogleFonts.roboto(
                         fontSize: 15,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
                         color: isDark ? Colors.white : Colors.black87,
                       ),
                     ),
                   ),
-                  Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: isDark ? Colors.white70 : Colors.black54,
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.06)
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
                   ),
                 ],
               ),
@@ -3051,9 +5272,14 @@ class _CreateAdScreenState extends State<CreateAdScreen> {
   }
 
   Widget _subtitle(String text) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Text(
       text,
-      style: GoogleFonts.roboto(color: Colors.grey),
+      style: GoogleFonts.roboto(
+        color: isDark ? Colors.white60 : Colors.black54,
+        fontSize: 14,
+        height: 1.4,
+      ),
     );
   }
 }

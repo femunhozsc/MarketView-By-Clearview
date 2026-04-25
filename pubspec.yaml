@@ -14,7 +14,6 @@ dependencies:
   firebase_core: ^3.0.0
   firebase_auth: ^5.0.0
   cloud_firestore: ^5.0.0
-  firebase_storage: ^12.0.0
 
   # Mapa gratuito (OpenStreetMap, sem API key)
   flutter_map: ^6.1.0
@@ -46,6 +45,7 @@ dependencies:
 
   # Ícones
   cupertino_icons: ^1.0.6
+  firebase_app_check: ^0.3.1
 
 dev_dependencies:
   flutter_test:

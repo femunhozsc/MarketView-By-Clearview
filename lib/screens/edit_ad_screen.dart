@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,9 +7,9 @@ import 'package:provider/provider.dart';
 
 import '../models/ad_model.dart';
 import '../providers/user_provider.dart';
+import '../services/ad_ai_service.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class _PropertyCostDraft {
@@ -30,6 +31,285 @@ class _PropertyCostDraft {
   }
 }
 
+class _EditablePhotoPreviewItem {
+  const _EditablePhotoPreviewItem.remote(this.url)
+      : file = null,
+        isRemote = true;
+
+  const _EditablePhotoPreviewItem.local(this.file)
+      : url = null,
+        isRemote = false;
+
+  final String? url;
+  final File? file;
+  final bool isRemote;
+}
+
+const int _maxAdPhotos = 6;
+
+class _AdSpecFieldConfig {
+  const _AdSpecFieldConfig({
+    required this.id,
+    required this.label,
+    required this.hint,
+    this.keyboardType = TextInputType.text,
+  });
+
+  final String id;
+  final String label;
+  final String hint;
+  final TextInputType keyboardType;
+}
+
+class _ListingFlowOption {
+  const _ListingFlowOption({
+    required this.id,
+    required this.title,
+    required this.type,
+    required this.defaultCategory,
+  });
+
+  final String id;
+  final String title;
+  final String type;
+  final String defaultCategory;
+}
+
+const String _listingFlowAutomotive = 'automotive';
+const String _listingFlowProducts = 'products';
+const String _listingFlowProperties = 'properties';
+const String _listingFlowServices = 'services';
+const String _listingFlowJobs = 'jobs';
+
+const List<_ListingFlowOption> _listingFlowOptions = [
+  _ListingFlowOption(
+    id: _listingFlowAutomotive,
+    title: 'Automóveis, peças e acessórios',
+    type: AdModel.productType,
+    defaultCategory: 'Veiculos',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowProducts,
+    title: 'Produtos',
+    type: AdModel.productType,
+    defaultCategory: 'Eletronicos',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowProperties,
+    title: 'Imóveis',
+    type: AdModel.productType,
+    defaultCategory: 'Imoveis',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowServices,
+    title: 'Serviços',
+    type: AdModel.serviceType,
+    defaultCategory: 'Outros servicos',
+  ),
+  _ListingFlowOption(
+    id: _listingFlowJobs,
+    title: 'Vaga de emprego',
+    type: AdModel.serviceType,
+    defaultCategory: 'Vaga de emprego',
+  ),
+];
+
+const List<_AdSpecFieldConfig> _genericServiceSpecFields = [
+  _AdSpecFieldConfig(
+    id: 'service_experience',
+    label: 'Tempo de experiencia',
+    hint: 'Ex: 4 anos',
+  ),
+  _AdSpecFieldConfig(
+    id: 'service_region',
+    label: 'Regiao de atendimento',
+    hint: 'Ex: Curitiba e regiao',
+  ),
+  _AdSpecFieldConfig(
+    id: 'service_schedule',
+    label: 'Disponibilidade',
+    hint: 'Ex: Segunda a sabado, comercial',
+  ),
+];
+
+const Map<String, List<_AdSpecFieldConfig>> _categorySpecFieldOptions = {
+  'Celulares': [
+    _AdSpecFieldConfig(
+      id: 'phone_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: 256 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'phone_ram',
+      label: 'Memoria RAM',
+      hint: 'Ex: 8 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'phone_battery_health',
+      label: 'Saude da bateria',
+      hint: 'Ex: 89%',
+      keyboardType: TextInputType.number,
+    ),
+    _AdSpecFieldConfig(
+      id: 'phone_condition',
+      label: 'Estado do aparelho',
+      hint: 'Ex: Sem marcas, tudo funcionando',
+    ),
+  ],
+  'Notebooks': [
+    _AdSpecFieldConfig(
+      id: 'notebook_processor',
+      label: 'Processador',
+      hint: 'Ex: Intel Core i7 12a geracao',
+    ),
+    _AdSpecFieldConfig(
+      id: 'notebook_ram',
+      label: 'Memoria RAM',
+      hint: 'Ex: 16 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'notebook_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: SSD 512 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'notebook_screen',
+      label: 'Tela',
+      hint: 'Ex: 15,6 polegadas Full HD',
+    ),
+  ],
+  'Computadores': [
+    _AdSpecFieldConfig(
+      id: 'pc_processor',
+      label: 'Processador',
+      hint: 'Ex: Ryzen 7 5700X',
+    ),
+    _AdSpecFieldConfig(
+      id: 'pc_ram',
+      label: 'Memoria RAM',
+      hint: 'Ex: 32 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'pc_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: SSD 1 TB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'pc_gpu',
+      label: 'Placa de video',
+      hint: 'Ex: RTX 4060',
+    ),
+  ],
+  'Tablets': [
+    _AdSpecFieldConfig(
+      id: 'tablet_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: 128 GB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'tablet_screen',
+      label: 'Tela',
+      hint: 'Ex: 11 polegadas',
+    ),
+    _AdSpecFieldConfig(
+      id: 'tablet_connectivity',
+      label: 'Conectividade',
+      hint: 'Ex: Wi-Fi + 5G',
+    ),
+  ],
+  'TVs': [
+    _AdSpecFieldConfig(
+      id: 'tv_size',
+      label: 'Polegadas',
+      hint: 'Ex: 55',
+      keyboardType: TextInputType.number,
+    ),
+    _AdSpecFieldConfig(
+      id: 'tv_resolution',
+      label: 'Resolucao',
+      hint: 'Ex: 4K UHD',
+    ),
+    _AdSpecFieldConfig(
+      id: 'tv_panel',
+      label: 'Tipo de painel',
+      hint: 'Ex: QLED, OLED ou LED',
+    ),
+  ],
+  'Videogames': [
+    _AdSpecFieldConfig(
+      id: 'console_storage',
+      label: 'Armazenamento',
+      hint: 'Ex: 1 TB',
+    ),
+    _AdSpecFieldConfig(
+      id: 'console_accessories',
+      label: 'Acompanha o que?',
+      hint: 'Ex: 2 controles, headset, jogos',
+    ),
+    _AdSpecFieldConfig(
+      id: 'console_condition',
+      label: 'Estado do console',
+      hint: 'Ex: Excelente, pouco usado',
+    ),
+  ],
+  'Roupas': [
+    _AdSpecFieldConfig(
+      id: 'fashion_brand',
+      label: 'Marca',
+      hint: 'Ex: Zara',
+    ),
+    _AdSpecFieldConfig(
+      id: 'fashion_size',
+      label: 'Tamanho',
+      hint: 'Ex: M / 40',
+    ),
+    _AdSpecFieldConfig(
+      id: 'fashion_condition',
+      label: 'Condicao',
+      hint: 'Ex: Nova com etiqueta',
+    ),
+  ],
+  'Moveis': [
+    _AdSpecFieldConfig(
+      id: 'furniture_material',
+      label: 'Material',
+      hint: 'Ex: MDF, madeira macica',
+    ),
+    _AdSpecFieldConfig(
+      id: 'furniture_dimensions',
+      label: 'Dimensoes',
+      hint: 'Ex: 1,80 x 0,90 x 0,45 m',
+    ),
+    _AdSpecFieldConfig(
+      id: 'furniture_condition',
+      label: 'Estado',
+      hint: 'Ex: Muito conservado',
+    ),
+  ],
+  'Vaga de emprego': [
+    _AdSpecFieldConfig(
+      id: 'job_contract',
+      label: 'Regime de contratacao',
+      hint: 'Ex: CLT, PJ, estagio',
+    ),
+    _AdSpecFieldConfig(
+      id: 'job_schedule',
+      label: 'Jornada',
+      hint: 'Ex: Segunda a sexta, 8h as 18h',
+    ),
+    _AdSpecFieldConfig(
+      id: 'job_mode',
+      label: 'Modalidade',
+      hint: 'Ex: Presencial, hibrido ou remoto',
+    ),
+    _AdSpecFieldConfig(
+      id: 'job_benefits',
+      label: 'Beneficios',
+      hint: 'Ex: VT, VR, comissao, plano de saude',
+    ),
+  ],
+};
+
 class EditAdScreen extends StatefulWidget {
   const EditAdScreen({super.key, required this.ad});
 
@@ -41,9 +321,9 @@ class EditAdScreen extends StatefulWidget {
 
 class _EditAdScreenState extends State<EditAdScreen> {
   final _pageController = PageController();
+  final _adAiService = AdAiService();
   final _cloudinary = CloudinaryService();
   final _firestore = FirestoreService();
-  final _storage = StorageService();
   late final TextEditingController _titleCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _priceCtrl;
@@ -53,6 +333,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
   late final TextEditingController _vehicleBrandCtrl;
   late final TextEditingController _vehicleModelCtrl;
   late final TextEditingController _vehicleYearCtrl;
+  late final TextEditingController _vehicleEngineCtrl;
   late final TextEditingController _vehicleOwnerCountCtrl;
   late final TextEditingController _vehicleOptionalCtrl;
   late final TextEditingController _propertyAreaCtrl;
@@ -60,14 +341,27 @@ class _EditAdScreenState extends State<EditAdScreen> {
   late final TextEditingController _propertyBathroomsCtrl;
   late final TextEditingController _propertyParkingCtrl;
   late final TextEditingController _condoFeeCtrl;
+  final Map<String, TextEditingController> _specControllers = {};
   final _newImages = <File>[];
   final _existingImages = <String>[];
+  int _photoPreviewIndex = 0;
+
+  void _changePhotoPreviewBy(int delta, int totalItems) {
+    if (totalItems <= 0) return;
+    setState(() {
+      _photoPreviewIndex =
+          (_photoPreviewIndex + delta).clamp(0, totalItems - 1);
+    });
+  }
+
   final _existingPublicIds = <String>[];
+  final _imageUrlsToDelete = <String>[];
   final _imagesToDelete = <String>[];
   final _selectedVehicleOptionals = <String>[];
   final _propertyCostDrafts = <_PropertyCostDraft>[];
   int _currentStep = 0;
   bool _isLoading = false;
+  String _selectedListingFlow = _listingFlowProducts;
   late String _selectedCategory;
   String? _selectedCategoryType;
   String? _customCategoryTypeLabel;
@@ -79,6 +373,10 @@ class _EditAdScreenState extends State<EditAdScreen> {
   bool _condoFeeOnRequest = false;
   String? _selectedVehicleColor;
   String? _selectedVehicleFuelType;
+  Timer? _draftAiDebounce;
+  bool _isAiLoading = false;
+  bool _hasAiDraftSuggestion = false;
+  String? _lastAiDraftSignature;
 
   bool get _isBuyRequest => widget.ad.isWantedAd;
   bool get _isVehicleProduct =>
@@ -90,6 +388,36 @@ class _EditAdScreenState extends State<EditAdScreen> {
       !_isBuyRequest &&
       _selectedType == AdModel.productType &&
       AdModel.normalizeValue(_selectedCategory) == 'imoveis';
+
+  bool get _isJobCategory =>
+      !_isBuyRequest &&
+      AdModel.normalizeValue(_selectedCategory) == 'vaga de emprego';
+
+  _ListingFlowOption get _selectedListingFlowOption {
+    return _listingFlowOptions.firstWhere(
+      (option) => option.id == _selectedListingFlow,
+      orElse: () => _listingFlowOptions[1],
+    );
+  }
+
+  List<_AdSpecFieldConfig> get _currentSpecConfigs {
+    if (_isBuyRequest) return const [];
+
+    final explicitType = _selectedCategoryType;
+    if (explicitType != null && explicitType != 'Outro') {
+      final specific = _categorySpecFieldOptions[explicitType];
+      if (specific != null) return specific;
+    }
+
+    final byCategory = _categorySpecFieldOptions[_selectedCategory];
+    if (byCategory != null) return byCategory;
+
+    if (_selectedType == AdModel.serviceType) {
+      return _genericServiceSpecFields;
+    }
+
+    return const [];
+  }
 
   bool get _hasPropertyCondo =>
       _selectedPropertyExtraMode == AdModel.propertyExtraCondo ||
@@ -122,6 +450,8 @@ class _EditAdScreenState extends State<EditAdScreen> {
     super.initState();
     _titleCtrl = TextEditingController(text: widget.ad.title);
     _descCtrl = TextEditingController(text: widget.ad.description);
+    _titleCtrl.addListener(_handleDraftInputChanged);
+    _descCtrl.addListener(_handleDraftInputChanged);
     _priceCtrl = TextEditingController(
       text: widget.ad.price.toStringAsFixed(2).replaceAll('.', ','),
     )..addListener(_formatPriceInput);
@@ -137,6 +467,8 @@ class _EditAdScreenState extends State<EditAdScreen> {
         TextEditingController(text: widget.ad.vehicleModel ?? '');
     _vehicleYearCtrl =
         TextEditingController(text: widget.ad.vehicleYear?.toString() ?? '');
+    _vehicleEngineCtrl =
+        TextEditingController(text: widget.ad.vehicleEngine ?? '');
     _vehicleOwnerCountCtrl = TextEditingController(
         text: widget.ad.vehicleOwnerCount?.toString() ?? '');
     _vehicleOptionalCtrl = TextEditingController();
@@ -170,6 +502,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
     _selectedCategoryType = widget.ad.categoryType;
     _customCategoryTypeLabel = widget.ad.categoryTypeCustomLabel;
     _selectedType = widget.ad.type;
+    _syncListingFlowWithCurrentCategory();
     _selectedServicePricing = widget.ad.servicePriceType;
     _selectedPropertyOfferType =
         widget.ad.propertyOfferType ?? AdModel.propertyOfferSale;
@@ -188,6 +521,11 @@ class _EditAdScreenState extends State<EditAdScreen> {
     _selectedVehicleFuelType =
         widget.ad.vehicleFuelType ?? vehicleFuelOptions.last;
     _selectedVehicleOptionals.addAll(widget.ad.vehicleOptionals);
+    for (final attribute in widget.ad.customAttributes) {
+      if (attribute.key.trim().isEmpty) continue;
+      _specControllers[attribute.key] =
+          TextEditingController(text: attribute.value);
+    }
     for (final cost in widget.ad.propertyMonthlyCosts) {
       _propertyCostDrafts.add(
         _PropertyCostDraft(
@@ -203,9 +541,14 @@ class _EditAdScreenState extends State<EditAdScreen> {
 
   @override
   void dispose() {
+    _draftAiDebounce?.cancel();
     _pageController.dispose();
-    _titleCtrl.dispose();
-    _descCtrl.dispose();
+    _titleCtrl
+      ..removeListener(_handleDraftInputChanged)
+      ..dispose();
+    _descCtrl
+      ..removeListener(_handleDraftInputChanged)
+      ..dispose();
     _priceCtrl
       ..removeListener(_formatPriceInput)
       ..dispose();
@@ -217,6 +560,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
     _vehicleBrandCtrl.dispose();
     _vehicleModelCtrl.dispose();
     _vehicleYearCtrl.dispose();
+    _vehicleEngineCtrl.dispose();
     _vehicleOwnerCountCtrl.dispose();
     _vehicleOptionalCtrl.dispose();
     _propertyAreaCtrl.dispose();
@@ -224,6 +568,9 @@ class _EditAdScreenState extends State<EditAdScreen> {
     _propertyBathroomsCtrl.dispose();
     _propertyParkingCtrl.dispose();
     _condoFeeCtrl.dispose();
+    for (final controller in _specControllers.values) {
+      controller.dispose();
+    }
     for (final draft in _propertyCostDrafts) {
       draft.dispose();
     }
@@ -260,6 +607,220 @@ class _EditAdScreenState extends State<EditAdScreen> {
   }
 
   String _label(String value) => AdModel.displayLabel(value);
+
+  TextEditingController _specControllerFor(String id) {
+    return _specControllers.putIfAbsent(id, TextEditingController.new);
+  }
+
+  List<AdAttribute> _buildCustomAttributes() {
+    final attributesByKey = <String, AdAttribute>{};
+    final knownSpecIds = <String>{
+      for (final config in _genericServiceSpecFields) config.id,
+      for (final configs in _categorySpecFieldOptions.values)
+        for (final config in configs) config.id,
+    };
+
+    for (final attribute in widget.ad.customAttributes) {
+      if (attribute.key.trim().isEmpty) continue;
+      if (knownSpecIds.contains(attribute.key) &&
+          !_currentSpecConfigs.any((config) => config.id == attribute.key)) {
+        continue;
+      }
+      attributesByKey[attribute.key] = attribute;
+    }
+
+    for (final config in _currentSpecConfigs) {
+      final value = _specControllerFor(config.id).text.trim();
+      if (value.isEmpty) {
+        attributesByKey.remove(config.id);
+        continue;
+      }
+      attributesByKey[config.id] = AdAttribute(
+        key: config.id,
+        label: config.label,
+        value: value,
+      );
+    }
+
+    return attributesByKey.values
+        .where((attribute) => attribute.value.trim().isNotEmpty)
+        .toList();
+  }
+
+  void _handleDraftInputChanged() {
+    if (!AdAiService.isConfigured) return;
+    _draftAiDebounce?.cancel();
+    _draftAiDebounce = Timer(
+      const Duration(milliseconds: 900),
+      _suggestDraftFromInputs,
+    );
+  }
+
+  String _currentAiDraftSignature() {
+    final title = _titleCtrl.text.trim();
+    final description = _descCtrl.text.trim();
+    return [
+      _selectedListingFlow,
+      _selectedType,
+      _selectedCategory,
+      title,
+      description,
+    ].join('|');
+  }
+
+  Map<String, List<String>> _categoryTypesForPrompt() {
+    return {
+      for (final category in _availableCategories)
+        category: categoryTypeOptions[category] ?? const <String>[],
+    };
+  }
+
+  Map<String, Map<String, String>> _specFieldsForPrompt() {
+    final allowedKeys = <String>{
+      ..._availableCategories,
+      for (final category in _availableCategories)
+        ...(categoryTypeOptions[category] ?? const <String>[]),
+    };
+
+    return {
+      for (final entry in _categorySpecFieldOptions.entries)
+        if (allowedKeys.contains(entry.key))
+          entry.key: {
+            for (final config in entry.value) config.id: config.label,
+          },
+    };
+  }
+
+  String? _matchAllowedVehicleValue(String? value, List<String> allowed) {
+    final candidate = value?.trim() ?? '';
+    if (candidate.isEmpty) return null;
+    final normalizedCandidate = AdModel.normalizeValue(candidate);
+    for (final option in allowed) {
+      if (AdModel.normalizeValue(option) == normalizedCandidate) {
+        return option;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _suggestDraftFromInputs() async {
+    final title = _titleCtrl.text.trim();
+    final description = _descCtrl.text.trim();
+    final signature = _currentAiDraftSignature();
+    if (title.length < 3 || _lastAiDraftSignature == signature) return;
+
+    setState(() => _isAiLoading = true);
+    try {
+      final suggestion = await _adAiService.suggestDraft(
+        title: title,
+        description: description,
+        listingTypeLabel: _selectedListingFlowOption.title,
+        categories: _availableCategories,
+        categoryTypesByCategory: _categoryTypesForPrompt(),
+        specFieldsByType: _specFieldsForPrompt(),
+        vehicleColors: vehicleColorOptions,
+        vehicleFuelTypes: vehicleFuelOptions,
+        vehicleOptionals: vehicleOptionalSuggestions,
+      );
+      if (!mounted) return;
+
+      final suggestedCategory = suggestion.category;
+      final canUseCategory = _availableCategories.contains(suggestedCategory);
+      final allowedTypes = canUseCategory
+          ? categoryTypeOptions[suggestedCategory] ?? const <String>[]
+          : const <String>[];
+      final suggestedType = suggestion.categoryType;
+      final canUseType =
+          suggestedType.isNotEmpty && allowedTypes.contains(suggestedType);
+
+      setState(() {
+        _lastAiDraftSignature = signature;
+        if (suggestion.correctedTitle.isNotEmpty) {
+          _titleCtrl.text = suggestion.correctedTitle;
+        }
+        if (canUseCategory) {
+          _selectedCategory = suggestedCategory;
+          _selectedCategoryType = canUseType ? suggestedType : null;
+          _customCategoryTypeLabel = null;
+          _syncListingFlowWithCurrentCategory();
+        }
+        if (_isVehicleProduct) {
+          if (_kmCtrl.text.trim().isEmpty && suggestion.vehicleKm != null) {
+            _kmCtrl.text = suggestion.vehicleKm!.toString();
+          }
+          if (_vehicleBrandCtrl.text.trim().isEmpty &&
+              suggestion.vehicleBrand?.isNotEmpty == true) {
+            _vehicleBrandCtrl.text = suggestion.vehicleBrand!;
+          }
+          if (_vehicleModelCtrl.text.trim().isEmpty &&
+              suggestion.vehicleModel?.isNotEmpty == true) {
+            _vehicleModelCtrl.text = suggestion.vehicleModel!;
+          }
+          if (_vehicleYearCtrl.text.trim().isEmpty &&
+              suggestion.vehicleYear != null) {
+            _vehicleYearCtrl.text = suggestion.vehicleYear!.toString();
+          }
+          if (_vehicleEngineCtrl.text.trim().isEmpty &&
+              suggestion.vehicleEngine?.isNotEmpty == true) {
+            _vehicleEngineCtrl.text = suggestion.vehicleEngine!;
+          }
+          final matchedColor = _matchAllowedVehicleValue(
+            suggestion.vehicleColor,
+            vehicleColorOptions,
+          );
+          if ((_selectedVehicleColor == null ||
+                  _selectedVehicleColor == vehicleColorOptions.first ||
+                  (widget.ad.vehicleColor?.trim().isEmpty ?? true)) &&
+              matchedColor != null) {
+            _selectedVehicleColor = matchedColor;
+          }
+          final matchedFuel = _matchAllowedVehicleValue(
+            suggestion.vehicleFuelType,
+            vehicleFuelOptions,
+          );
+          if ((_selectedVehicleFuelType == null ||
+                  _selectedVehicleFuelType == vehicleFuelOptions.last ||
+                  (widget.ad.vehicleFuelType?.trim().isEmpty ?? true)) &&
+              matchedFuel != null) {
+            _selectedVehicleFuelType = matchedFuel;
+          }
+          for (final optional in suggestion.vehicleOptionals) {
+            final matchedOptional = _matchAllowedVehicleValue(
+              optional,
+              vehicleOptionalSuggestions,
+            );
+            if (matchedOptional == null ||
+                matchedOptional == 'Outro +' ||
+                _selectedVehicleOptionals.contains(matchedOptional)) {
+              continue;
+            }
+            _selectedVehicleOptionals.add(matchedOptional);
+          }
+        }
+        for (final config in _currentSpecConfigs) {
+          final specValue = suggestion.specs[config.id];
+          if (specValue == null || specValue.isEmpty) continue;
+          final controller = _specControllerFor(config.id);
+          if (controller.text.trim().isEmpty) {
+            controller.text = specValue;
+          }
+        }
+        _hasAiDraftSuggestion = suggestion.specs.isNotEmpty ||
+            suggestion.vehicleKm != null ||
+            suggestion.vehicleBrand?.isNotEmpty == true ||
+            suggestion.vehicleModel?.isNotEmpty == true ||
+            suggestion.vehicleYear != null ||
+            suggestion.vehicleEngine?.isNotEmpty == true ||
+            suggestion.vehicleColor?.isNotEmpty == true ||
+            suggestion.vehicleFuelType?.isNotEmpty == true ||
+            suggestion.vehicleOptionals.isNotEmpty;
+      });
+    } catch (_) {
+      // Falha silenciosa para nao interromper a edicao.
+    } finally {
+      if (mounted) setState(() => _isAiLoading = false);
+    }
+  }
 
   void _toggleVehicleOptional(String value) {
     setState(() {
@@ -341,13 +902,63 @@ class _EditAdScreenState extends State<EditAdScreen> {
     return normalized;
   }
 
-  void _handleTypeChange(String value) {
+  void _syncListingFlowWithCurrentCategory() {
+    if (_isBuyRequest) return;
+
+    final normalizedCategory = AdModel.normalizeValue(_selectedCategory);
+    if (_selectedType == AdModel.serviceType) {
+      _selectedListingFlow = normalizedCategory == 'vaga de emprego'
+          ? _listingFlowJobs
+          : _listingFlowServices;
+      return;
+    }
+    if (normalizedCategory == 'veiculos') {
+      _selectedListingFlow = _listingFlowAutomotive;
+      return;
+    }
+    if (normalizedCategory == 'imoveis') {
+      _selectedListingFlow = _listingFlowProperties;
+      return;
+    }
+    _selectedListingFlow = _listingFlowProducts;
+  }
+
+  void _handleListingFlowChange(String flowId) {
+    final option = _listingFlowOptions.firstWhere(
+      (entry) => entry.id == flowId,
+      orElse: () => _listingFlowOptions[1],
+    );
+    _handleTypeChange(
+      option.type,
+      preferredCategory: option.defaultCategory,
+      listingFlowId: option.id,
+      forcePreferredCategory: true,
+    );
+  }
+
+  void _handleTypeChange(
+    String value, {
+    String? preferredCategory,
+    String? listingFlowId,
+    bool forcePreferredCategory = false,
+  }) {
     setState(() {
       _selectedType = value;
       final allowedCategories =
           value == AdModel.serviceType ? serviceCategories : productCategories;
-      if (!allowedCategories.contains(_selectedCategory)) {
+      final canUsePreferredCategory = preferredCategory != null &&
+          allowedCategories.contains(preferredCategory);
+      if (canUsePreferredCategory &&
+          (forcePreferredCategory ||
+              !allowedCategories.contains(_selectedCategory))) {
+        _selectedCategory = preferredCategory;
+      } else if (!allowedCategories.contains(_selectedCategory)) {
         _selectedCategory = allowedCategories.first;
+      }
+      if (listingFlowId != null) {
+        _selectedListingFlow = listingFlowId;
+      } else {
+        _syncListingFlowWithCurrentCategory();
       }
       _selectedCategoryType = null;
       _customCategoryTypeLabel = null;
@@ -367,6 +978,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
   void _handleCategoryChange(String value) {
     setState(() {
       _selectedCategory = value;
+      _syncListingFlowWithCurrentCategory();
       _selectedCategoryType = null;
       _customCategoryTypeLabel = null;
       if (!_isVehicleProduct) {
@@ -635,7 +1247,8 @@ class _EditAdScreenState extends State<EditAdScreen> {
   }
 
   Future<void> _pickImages() async {
-    final remaining = 10 - (_existingImages.length + _newImages.length);
+    final remaining =
+        _maxAdPhotos - (_existingImages.length + _newImages.length);
     if (remaining <= 0) return;
     final files =
         await _cloudinary.pickImagesFromGallery(context, max: remaining);
@@ -673,8 +1286,14 @@ class _EditAdScreenState extends State<EditAdScreen> {
     );
     if (confirm != true || !mounted) return;
     setState(() {
+      final publicId =
+          index < _existingPublicIds.length ? _existingPublicIds[index] : '';
+      if (publicId.trim().isNotEmpty) {
+        _imagesToDelete.add(publicId);
+      } else {
+        _imageUrlsToDelete.add(_existingImages[index]);
+      }
       if (index < _existingPublicIds.length) {
-        _imagesToDelete.add(_existingPublicIds[index]);
         _existingPublicIds.removeAt(index);
       }
       _existingImages.removeAt(index);
@@ -705,6 +1324,18 @@ class _EditAdScreenState extends State<EditAdScreen> {
     setState(() => _currentStep--);
   }
 
+  Future<void> _goToStep(int step) async {
+    if (step == _currentStep) return;
+    if (_currentStep == 0 && step > 0 && !_validateInfo()) return;
+    await _pageController.animateToPage(
+      step,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+    if (!mounted) return;
+    setState(() => _currentStep = step);
+  }
+
   Future<void> _submit() async {
     setState(() => _isLoading = true);
     try {
@@ -713,13 +1344,25 @@ class _EditAdScreenState extends State<EditAdScreen> {
       if (_imagesToDelete.isNotEmpty) {
         await _cloudinary.deleteImages(_imagesToDelete);
       }
+      for (final imageUrl in _imageUrlsToDelete) {
+        await _cloudinary.deleteImageByUrl(imageUrl);
+      }
 
       final newImageUrls = <String>[];
       final newPublicIds = <String>[];
       var failedImageUploads = 0;
+      if (_newImages.isNotEmpty && !_cloudinary.isConfigured) {
+        throw Exception(
+          'Cloudinary nao configurado. Informe CLOUDINARY_CLOUD_NAME e CLOUDINARY_UPLOAD_PRESET para enviar imagens.',
+        );
+      }
       for (int i = 0; i < _newImages.length; i++) {
-        final result =
-            await _cloudinary.uploadAdPhotoFull(widget.ad.id, _newImages[i], i);
+        final imageIndex = _existingImages.length + i;
+        final result = await _cloudinary.uploadAdPhotoFull(
+          widget.ad.id,
+          _newImages[i],
+          imageIndex,
+        );
         if (result != null &&
             result['url'] != null &&
             result['publicId'] != null) {
@@ -727,13 +1370,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
           newPublicIds.add(result['publicId']!);
           continue;
         }
-        final firebaseUrl =
-            await _storage.uploadAdPhoto(widget.ad.id, _newImages[i], i);
-        if (firebaseUrl != null && firebaseUrl.trim().isNotEmpty) {
-          newImageUrls.add(firebaseUrl);
-        } else {
-          failedImageUploads++;
-        }
+        failedImageUploads++;
       }
 
       final newPrice = _parseCurrency(_priceCtrl.text) ?? widget.ad.price;
@@ -792,7 +1429,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
         'propertyFurnishing':
             _isPropertyProduct ? _selectedPropertyFurnishing : null,
         'customAttributes':
-            widget.ad.customAttributes.map((item) => item.toMap()).toList(),
+            _buildCustomAttributes().map((item) => item.toMap()).toList(),
         'images': [..._existingImages, ...newImageUrls],
         'imagePublicIds': [..._existingPublicIds, ...newPublicIds],
         'location': _locationCtrl.text.trim().isNotEmpty
@@ -808,6 +1445,8 @@ class _EditAdScreenState extends State<EditAdScreen> {
         'vehicleYear': _isVehicleProduct
             ? int.tryParse(_vehicleYearCtrl.text.trim())
             : null,
+        'vehicleEngine':
+            _isVehicleProduct ? _vehicleEngineCtrl.text.trim() : null,
         'vehicleOptionals': _isVehicleProduct
             ? List<String>.from(_selectedVehicleOptionals)
             : const [],
@@ -938,6 +1577,8 @@ class _EditAdScreenState extends State<EditAdScreen> {
       padding: const EdgeInsets.all(24),
       children: [
         _title('Detalhes do anúncio', isDark),
+        const SizedBox(height: 12),
+        _photosShortcutCard(isDark),
         const SizedBox(height: 24),
         _field(
           _titleCtrl,
@@ -947,20 +1588,49 @@ class _EditAdScreenState extends State<EditAdScreen> {
               : 'Ex: Marca produto e Modelo',
           isDark,
         ),
+        if (!AdAiService.isConfigured) ...[
+          const SizedBox(height: 14),
+          _aiUnavailableBanner(isDark),
+        ],
+        if (_isAiLoading) ...[
+          const SizedBox(height: 14),
+          _aiLoadingBanner(isDark),
+        ] else if (_hasAiDraftSuggestion) ...[
+          const SizedBox(height: 14),
+          _aiGeneratedBanner(isDark),
+        ],
         const SizedBox(height: 18),
         _field(_descCtrl, 'Descrição', 'Conte mais sobre o anúncio...', isDark,
             maxLines: 4),
         const SizedBox(height: 18),
-        _chipSection(
-          title: 'Tipo',
-          options: const ['Item/Bem', 'Serviço'],
-          selectedValues: {
-            _selectedType == AdModel.serviceType ? 'Serviço' : 'Item/Bem',
-          },
-          onTap: (value) => _handleTypeChange(
-            value == 'Serviço' ? AdModel.serviceType : AdModel.productType,
+        if (_isBuyRequest)
+          _chipSection(
+            title: 'Tipo',
+            options: const ['Produto que preciso', 'Serviço que preciso'],
+            selectedValues: {
+              _selectedType == AdModel.serviceType
+                  ? 'Serviço que preciso'
+                  : 'Produto que preciso',
+            },
+            onTap: (value) => _handleTypeChange(
+              value == 'Serviço que preciso'
+                  ? AdModel.serviceType
+                  : AdModel.productType,
+            ),
+          )
+        else
+          _chipSection(
+            title: 'Tipo de anúncio',
+            options: _listingFlowOptions.map((option) => option.title).toList(),
+            selectedValues: {_selectedListingFlowOption.title},
+            onTap: (value) {
+              final option = _listingFlowOptions.firstWhere(
+                (entry) => entry.title == value,
+                orElse: () => _listingFlowOptions[1],
+              );
+              _handleListingFlowChange(option.id);
+            },
           ),
-        ),
         const SizedBox(height: 18),
         Text('Categoria',
             style: GoogleFonts.roboto(fontWeight: FontWeight.w600)),
@@ -996,6 +1666,10 @@ class _EditAdScreenState extends State<EditAdScreen> {
               setState(() => _selectedServicePricing = entry.key);
             },
           ),
+        ],
+        if (_currentSpecConfigs.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _dynamicSpecSection(isDark),
         ],
         if (_isPropertyProduct) ...[
           const SizedBox(height: 18),
@@ -1232,6 +1906,13 @@ class _EditAdScreenState extends State<EditAdScreen> {
           _field(_vehicleYearCtrl, 'Ano', 'Ex: 2020', isDark,
               keyboardType: TextInputType.number),
           const SizedBox(height: 18),
+          _field(
+            _vehicleEngineCtrl,
+            'Motorização',
+            'Ex: 2.0, 1.6 ou 1.0 turbo',
+            isDark,
+          ),
+          const SizedBox(height: 18),
           _field(_vehicleOwnerCountCtrl, 'Número de proprietários', 'Ex: 1',
               isDark,
               keyboardType: TextInputType.number),
@@ -1265,107 +1946,618 @@ class _EditAdScreenState extends State<EditAdScreen> {
     );
   }
 
+  Widget _aiLoadingBanner(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? AppTheme.blackBorder : Colors.grey.shade200,
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Lendo título e descrição para completar a ficha automaticamente.',
+              style: GoogleFonts.roboto(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _aiGeneratedBanner(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.facebookBlue.withValues(alpha: isDark ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppTheme.facebookBlue.withValues(alpha: 0.28),
+        ),
+      ),
+      child: Text(
+        'A IA identificou dados do anúncio e preencheu os campos vazios da ficha do veículo.',
+        style: GoogleFonts.roboto(
+          fontWeight: FontWeight.w700,
+          color: isDark ? Colors.white : Colors.black87,
+        ),
+      ),
+    );
+  }
+
+  Widget _aiUnavailableBanner(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? AppTheme.blackBorder : Colors.grey.shade200,
+        ),
+      ),
+      child: Text(
+        'A leitura automática depende da chave GEMINI_API_KEY configurada no app.',
+        style: GoogleFonts.roboto(
+          fontWeight: FontWeight.w600,
+          color: isDark ? Colors.white70 : Colors.black54,
+        ),
+      ),
+    );
+  }
+
+  Widget _photosShortcutCard(bool isDark) {
+    final totalImages = _existingImages.length + _newImages.length;
+    final borderColor = isDark ? AppTheme.blackBorder : Colors.grey.shade200;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _goToStep(1),
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppTheme.facebookBlue.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.photo_library_outlined,
+                  color: AppTheme.facebookBlue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Fotos do anúncio',
+                      style: GoogleFonts.roboto(
+                        fontWeight: FontWeight.w800,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$totalImages de $_maxAdPhotos fotos • adicionar ou remover',
+                      style: GoogleFonts.roboto(
+                        color: isDark ? Colors.white70 : Colors.grey.shade600,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _stepPhotos(bool isDark) {
     final totalImages = _existingImages.length + _newImages.length;
+    final previewItems = [
+      ..._existingImages.map(_EditablePhotoPreviewItem.remote),
+      ..._newImages.map(_EditablePhotoPreviewItem.local),
+    ];
+    final selectedIndex = previewItems.isEmpty
+        ? 0
+        : _photoPreviewIndex.clamp(0, previewItems.length - 1);
+    final selectedItem =
+        previewItems.isEmpty ? null : previewItems[selectedIndex];
+
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
         _title('Fotos do anúncio', isDark),
         const SizedBox(height: 8),
         Text(
-          'Adicione ou remova fotos. Toque nas novas imagens para cortar.',
-          style: GoogleFonts.roboto(color: Colors.grey),
+          'Adicione, remova ou recorte as fotos. Arraste para os lados para trocar a foto principal.',
+          style: GoogleFonts.roboto(
+            color: isDark ? Colors.white70 : Colors.grey.shade700,
+            height: 1.35,
+          ),
         ),
         const SizedBox(height: 24),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            ..._existingImages.asMap().entries.map((entry) => Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        entry.value,
-                        width: 100,
-                        height: 100,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          width: 100,
-                          height: 100,
-                          color: isDark
-                              ? AppTheme.blackLight
-                              : Colors.grey.shade200,
-                          child: const Icon(Icons.image_not_supported),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: 4,
-                      right: 4,
-                      child: GestureDetector(
-                        onTap: () => _removeExistingImage(entry.key),
-                        child: const CircleAvatar(
-                          radius: 12,
-                          backgroundColor: Colors.black54,
-                          child: Icon(Icons.close, size: 14),
-                        ),
-                      ),
-                    ),
-                  ],
-                )),
-            ..._newImages.asMap().entries.map((entry) => GestureDetector(
-                  onTap: () => _cropNewImageAt(entry.key),
-                  child: Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.file(
-                          entry.value,
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: GestureDetector(
-                          onTap: () =>
-                              setState(() => _newImages.removeAt(entry.key)),
-                          child: const CircleAvatar(
-                            radius: 12,
-                            backgroundColor: Colors.black54,
-                            child: Icon(Icons.close, size: 14),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-            if (totalImages < 10)
-              InkWell(
-                onTap: _pickImages,
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: isDark ? AppTheme.blackLight : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color:
-                          isDark ? AppTheme.blackBorder : Colors.grey.shade300,
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.add_a_photo_outlined,
-                    color: AppTheme.facebookBlue,
-                  ),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.blackLight : Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+              color: isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.14 : 0.05),
+                blurRadius: 22,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                totalImages == 0
+                    ? 'Nenhuma foto adicionada'
+                    : '$totalImages de $_maxAdPhotos fotos prontas para o anúncio',
+                style: GoogleFonts.roboto(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white : Colors.black87,
                 ),
               ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                totalImages == 0
+                    ? 'Escolha imagens da galeria para montar a nova prévia do anúncio.'
+                    : 'Toque em uma miniatura para escolher a foto principal.',
+                style: GoogleFonts.roboto(
+                  fontSize: 12.5,
+                  height: 1.35,
+                  color: isDark ? Colors.white60 : Colors.black54,
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (previewItems.isEmpty)
+                InkWell(
+                  onTap: _pickImages,
+                  borderRadius: BorderRadius.circular(22),
+                  child: Ink(
+                    height: 180,
+                    decoration: BoxDecoration(
+                      color: isDark ? AppTheme.blackCard : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: isDark
+                            ? AppTheme.blackBorder
+                            : Colors.grey.shade300,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.add_photo_alternate_outlined,
+                          color: AppTheme.facebookBlue,
+                          size: 34,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Adicionar fotos',
+                          style: GoogleFonts.roboto(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Galeria • até $_maxAdPhotos imagens',
+                          style: GoogleFonts.roboto(
+                            fontSize: 12.5,
+                            color: isDark ? Colors.white60 : Colors.black54,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else ...[
+                GestureDetector(
+                  onHorizontalDragEnd: (details) {
+                    final velocity = details.primaryVelocity ?? 0;
+                    if (velocity < -80) {
+                      _changePhotoPreviewBy(1, previewItems.length);
+                    } else if (velocity > 80) {
+                      _changePhotoPreviewBy(-1, previewItems.length);
+                    }
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: isDark
+                            ? AppTheme.blackBorder
+                            : const Color(0xFFE2E8F0),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black
+                              .withValues(alpha: isDark ? 0.12 : 0.05),
+                          blurRadius: 16,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: AspectRatio(
+                        aspectRatio: 1.06,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 240),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeOutCubic,
+                              transitionBuilder: (child, animation) {
+                                final offsetAnimation = Tween<Offset>(
+                                  begin: const Offset(0.08, 0),
+                                  end: Offset.zero,
+                                ).animate(animation);
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: SlideTransition(
+                                    position: offsetAnimation,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: selectedItem!.isRemote
+                                  ? Image.network(
+                                      selectedItem.url!,
+                                      key: ValueKey(selectedItem.url),
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                        color: isDark
+                                            ? AppTheme.blackCard
+                                            : Colors.grey.shade200,
+                                        alignment: Alignment.center,
+                                        child: const Icon(
+                                          Icons.image_not_supported,
+                                        ),
+                                      ),
+                                    )
+                                  : Image.file(
+                                      selectedItem.file!,
+                                      key: ValueKey(selectedItem.file!.path),
+                                      fit: BoxFit.cover,
+                                    ),
+                            ),
+                            Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.10),
+                                    Colors.transparent,
+                                    Colors.black.withValues(alpha: 0.42),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (previewItems.length > 1)
+                              Positioned(
+                                left: 14,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.chevron_left_rounded,
+                                    size: 30,
+                                    color: Colors.white.withValues(alpha: 0.78),
+                                  ),
+                                ),
+                              ),
+                            if (previewItems.length > 1)
+                              Positioned(
+                                right: 14,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.chevron_right_rounded,
+                                    size: 30,
+                                    color: Colors.white.withValues(alpha: 0.78),
+                                  ),
+                                ),
+                              ),
+                            Positioned(
+                              top: 14,
+                              left: 14,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.50),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  'Prévia do anúncio',
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 14,
+                              right: 14,
+                              child: InkWell(
+                                onTap: () async {
+                                  if (selectedItem.isRemote) {
+                                    await _removeExistingImage(selectedIndex);
+                                    if (!mounted) return;
+                                    setState(() {
+                                      final remaining = _existingImages.length +
+                                          _newImages.length;
+                                      if (_photoPreviewIndex >= remaining) {
+                                        _photoPreviewIndex =
+                                            remaining == 0 ? 0 : remaining - 1;
+                                      }
+                                    });
+                                    return;
+                                  }
+
+                                  setState(() {
+                                    final localIndex =
+                                        selectedIndex - _existingImages.length;
+                                    if (localIndex >= 0 &&
+                                        localIndex < _newImages.length) {
+                                      _newImages.removeAt(localIndex);
+                                    }
+                                    final remaining = _existingImages.length +
+                                        _newImages.length;
+                                    if (_photoPreviewIndex >= remaining) {
+                                      _photoPreviewIndex =
+                                          remaining == 0 ? 0 : remaining - 1;
+                                    }
+                                  });
+                                },
+                                borderRadius: BorderRadius.circular(999),
+                                child: Container(
+                                  width: 38,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.55),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (!selectedItem.isRemote)
+                              Positioned(
+                                left: 14,
+                                right: 14,
+                                bottom: 14,
+                                child: FilledButton.icon(
+                                  onPressed: () => _cropNewImageAt(
+                                    selectedIndex - _existingImages.length,
+                                  ),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor:
+                                        Colors.black.withValues(alpha: 0.54),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 14,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(18),
+                                    ),
+                                  ),
+                                  icon:
+                                      const Icon(Icons.tune_rounded, size: 18),
+                                  label: const Text('Recortar foto'),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 94,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: previewItems.length +
+                        (totalImages < _maxAdPhotos ? 1 : 0),
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      if (index == previewItems.length) {
+                        return InkWell(
+                          onTap: _pickImages,
+                          borderRadius: BorderRadius.circular(18),
+                          child: Container(
+                            width: 82,
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? AppTheme.blackCard
+                                  : Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: isDark
+                                    ? AppTheme.blackBorder
+                                    : Colors.grey.shade300,
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                  color: AppTheme.facebookBlue,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Adicionar',
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color:
+                                        isDark ? Colors.white : Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+
+                      final item = previewItems[index];
+                      final isSelected = index == selectedIndex;
+                      return InkWell(
+                        onTap: () => setState(() => _photoPreviewIndex = index),
+                        borderRadius: BorderRadius.circular(18),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          width: 82,
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: isDark ? AppTheme.blackCard : Colors.white,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppTheme.facebookBlue
+                                  : (isDark
+                                      ? AppTheme.blackBorder
+                                      : Colors.grey.shade300),
+                              width: isSelected ? 2 : 1,
+                            ),
+                            boxShadow: isSelected
+                                ? [
+                                    BoxShadow(
+                                      color: AppTheme.facebookBlue
+                                          .withValues(alpha: 0.18),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                if (item.isRemote)
+                                  Image.network(
+                                    item.url!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: isDark
+                                          ? AppTheme.blackCard
+                                          : Colors.grey.shade200,
+                                      alignment: Alignment.center,
+                                      child: const Icon(
+                                        Icons.image_not_supported,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Image.file(item.file!, fit: BoxFit.cover),
+                                if (isSelected)
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.92),
+                                        width: 2,
+                                      ),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
+      ],
+    );
+  }
+
+  Widget _dynamicSpecSection(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Especificacoes extras',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Edite os detalhes especificos que aparecem na ficha do anuncio.',
+          style: GoogleFonts.roboto(color: Colors.grey, fontSize: 13),
+        ),
+        const SizedBox(height: 14),
+        ..._currentSpecConfigs.asMap().entries.map((entry) {
+          final config = entry.value;
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: entry.key == _currentSpecConfigs.length - 1 ? 0 : 18,
+            ),
+            child: _field(
+              _specControllerFor(config.id),
+              config.label,
+              config.hint,
+              isDark,
+              keyboardType: config.keyboardType,
+            ),
+          );
+        }),
       ],
     );
   }
@@ -1411,11 +2603,12 @@ class _EditAdScreenState extends State<EditAdScreen> {
       propertyParkingSpots: int.tryParse(_propertyParkingCtrl.text.trim()),
       propertyFurnishing:
           _isPropertyProduct ? _selectedPropertyFurnishing : null,
-      customAttributes: widget.ad.customAttributes,
+      customAttributes: _buildCustomAttributes(),
       km: int.tryParse(_kmCtrl.text.replaceAll('.', '')),
       vehicleBrand: _vehicleBrandCtrl.text.trim(),
       vehicleModel: _vehicleModelCtrl.text.trim(),
       vehicleYear: int.tryParse(_vehicleYearCtrl.text.trim()),
+      vehicleEngine: _vehicleEngineCtrl.text.trim(),
       vehicleOptionals: List<String>.from(_selectedVehicleOptionals),
       vehicleColor: _selectedVehicleColor,
       vehicleFuelType: _selectedVehicleFuelType,
@@ -1448,7 +2641,13 @@ class _EditAdScreenState extends State<EditAdScreen> {
         _summaryRow('Categoria', previewAd.displayCategoryLabel, isDark),
         if (previewAd.displayCategoryTypeLabel.isNotEmpty)
           _summaryRow('Subtipo', previewAd.displayCategoryTypeLabel, isDark),
-        _summaryRow('Tipo', previewAd.displayTypeLabel, isDark),
+        _summaryRow(
+          'Tipo',
+          _isBuyRequest
+              ? previewAd.displayTypeLabel
+              : _selectedListingFlowOption.title,
+          isDark,
+        ),
         if (_selectedType == AdModel.serviceType)
           _summaryRow(
               'Cobrança', previewAd.displayServicePriceTypeLabel, isDark),
@@ -1646,6 +2845,7 @@ class _EditAdScreenState extends State<EditAdScreen> {
           ? 'Valor do aluguel (R\$)'
           : 'Valor de venda (R\$)';
     }
+    if (_isJobCategory) return 'Salario / remuneracao (R\$)';
     if (_selectedType != AdModel.serviceType) return 'Preço (R\$)';
     if (_selectedServicePricing == AdModel.servicePriceHourly) {
       return 'Valor por hora (R\$)';

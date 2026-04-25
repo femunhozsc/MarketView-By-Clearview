@@ -5,10 +5,12 @@ import 'package:provider/provider.dart';
 import '../models/ad_model.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
+import '../services/report_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ad_card.dart';
 import '../widgets/edge_swipe_back.dart';
 import '../widgets/favorite_button.dart';
+import '../widgets/top_bar.dart';
 import 'chat_detail_screen.dart';
 import 'edit_ad_screen.dart';
 import 'image_gallery_viewer_screen.dart';
@@ -30,6 +32,7 @@ class AdDetailScreen extends StatefulWidget {
 
 class _AdDetailScreenState extends State<AdDetailScreen> {
   final _firestore = FirestoreService();
+  final _reportService = ReportService();
   final _pageController = PageController();
   final _messageComposer = TextEditingController(
     text: 'Oi, esse item ainda está disponível?',
@@ -496,6 +499,43 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
     );
   }
 
+  void _goHome() {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  Future<void> _showAdActions() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Denunciar anuncio'),
+              onTap: () => Navigator.pop(context, 'report'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action != 'report' || !mounted) return;
+
+    final user = context.read<UserProvider>().user;
+    final sent = await _reportService.showReportDialog(
+      context: context,
+      user: user,
+      targetType: 'ad',
+      targetId: widget.ad.id,
+      targetTitle: widget.ad.title,
+      targetOwnerId: widget.ad.sellerId,
+    );
+    if (!mounted || !sent) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Denuncia enviada ao suporte.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -519,16 +559,27 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
       backgroundColor: bg,
       appBar: AppBar(
         backgroundColor: bg,
+        surfaceTintColor: bg,
         elevation: 0,
+        toolbarHeight: 68,
+        titleSpacing: 4,
+        shape: Border(bottom: BorderSide(color: border)),
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
           icon: Icon(Icons.arrow_back_rounded, color: titleColor),
         ),
+        title: MarketViewLogo(onTap: _goHome),
         actions: [
-          FavoriteButton(
-            adId: widget.ad.id,
-            size: 34,
-            showBackground: false,
+          IconButton(
+            onPressed: _showAdActions,
+            icon: Icon(Icons.more_horiz_rounded, color: titleColor),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FavoriteButton(
+              adId: widget.ad.id,
+              size: 42,
+            ),
           ),
         ],
       ),
@@ -908,21 +959,12 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
 
                   return LayoutBuilder(
                     builder: (context, constraints) {
-                      final crossAxisCount =
-                          constraints.maxWidth >= 720 ? 3 : 2;
-                      final mainAxisExtent =
-                          constraints.maxWidth >= 720 ? 300.0 : 282.0;
-
                       return GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: relatedAds.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 10,
-                          mainAxisExtent: mainAxisExtent,
-                        ),
+                        gridDelegate:
+                            AdCard.gridDelegateForWidth(constraints.maxWidth),
                         itemBuilder: (context, index) => AdCard(
                           ad: relatedAds[index],
                           index: index,

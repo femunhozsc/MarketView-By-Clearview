@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 
 import '../models/ad_model.dart';
+import '../providers/user_provider.dart';
+import '../services/report_service.dart';
 import '../theme/app_theme.dart';
 import 'favorite_button.dart';
 
@@ -21,12 +24,34 @@ class AdCard extends StatelessWidget {
   final String? badgeLabel;
   final int? distanceKm;
 
+  static const double gridMainAxisExtent = 246;
+
+  static SliverGridDelegate gridDelegate(BuildContext context) {
+    return gridDelegateForWidth(MediaQuery.sizeOf(context).width);
+  }
+
+  static SliverGridDelegate gridDelegateForWidth(double width) {
+    final crossAxisCount = width >= 980
+        ? 4
+        : width >= 720
+            ? 3
+            : 2;
+
+    return SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: crossAxisCount,
+      crossAxisSpacing: 0,
+      mainAxisSpacing: 0,
+      mainAxisExtent: gridMainAxisExtent,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final border = isDark ? AppTheme.blackBorder : const Color(0xFFE5E7EB);
     final titleColor = isDark ? Colors.white : Colors.black;
     final imageBg = isDark ? AppTheme.blackLight : const Color(0xFFF2F2F2);
+    final reportService = ReportService();
     final labels = <({String text, Color bg, Color fg})>[
       if (ad.isWantedAd)
         (
@@ -117,9 +142,72 @@ class AdCard extends StatelessWidget {
                     Positioned(
                       top: 6,
                       right: 6,
-                      child: FavoriteButton(
-                        adId: ad.id,
-                        size: 30,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FavoriteButton(
+                            adId: ad.id,
+                            size: 30,
+                          ),
+                          const SizedBox(height: 5),
+                          Material(
+                            color: Colors.white.withValues(alpha: 0.94),
+                            shape: const CircleBorder(),
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: () async {
+                                final action =
+                                    await showModalBottomSheet<String>(
+                                  context: context,
+                                  builder: (context) => SafeArea(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ListTile(
+                                          leading:
+                                              const Icon(Icons.flag_outlined),
+                                          title:
+                                              const Text('Denunciar anuncio'),
+                                          onTap: () =>
+                                              Navigator.pop(context, 'report'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                                if (action != 'report' || !context.mounted) {
+                                  return;
+                                }
+                                final user = context.read<UserProvider>().user;
+                                final sent =
+                                    await reportService.showReportDialog(
+                                  context: context,
+                                  user: user,
+                                  targetType: 'ad',
+                                  targetId: ad.id,
+                                  targetTitle: ad.title,
+                                  targetOwnerId: ad.sellerId,
+                                );
+                                if (!context.mounted || !sent) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content:
+                                        Text('Denuncia enviada ao suporte.'),
+                                  ),
+                                );
+                              },
+                              child: const SizedBox(
+                                width: 30,
+                                height: 30,
+                                child: Icon(
+                                  Icons.more_horiz_rounded,
+                                  size: 18,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

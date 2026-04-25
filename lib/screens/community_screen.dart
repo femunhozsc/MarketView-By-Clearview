@@ -11,6 +11,8 @@ import '../models/user_model.dart';
 import '../providers/user_provider.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
+import '../services/report_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'community_post_comments_screen.dart';
 import 'profile_screen.dart';
@@ -26,6 +28,8 @@ class CommunityScreen extends StatefulWidget {
 class _CommunityScreenState extends State<CommunityScreen> {
   final _firestore = FirestoreService();
   final _cloudinary = CloudinaryService();
+  final _storage = StorageService();
+  final _reportService = ReportService();
   final _postCtrl = TextEditingController();
 
   _CommunityFeedTab _selectedTab = _CommunityFeedTab.recommended;
@@ -100,9 +104,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
       return cloudinaryUrl;
     }
 
-    throw Exception(
-      'Nao foi possivel enviar a imagem para o Cloudinary. Verifique a configuracao do upload preset.',
-    );
+    final firebaseUrl =
+        await _storage.uploadCommunityPostImage(postId, _selectedImage!);
+    if (firebaseUrl != null && firebaseUrl.trim().isNotEmpty) {
+      return firebaseUrl;
+    }
+
+    throw Exception('Nao foi possivel enviar a imagem.');
   }
 
   Future<void> _publishPost() async {
@@ -279,7 +287,6 @@ class _CommunityScreenState extends State<CommunityScreen> {
     UserModel? user,
   ) async {
     final canDelete = _canDeletePost(post, user);
-    if (!canDelete) return;
 
     final result = await showModalBottomSheet<String>(
       context: anchorContext,
@@ -287,13 +294,19 @@ class _CommunityScreenState extends State<CommunityScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (canDelete)
+              ListTile(
+                leading:
+                    const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                title: const Text('Excluir publicacao'),
+                textColor: Colors.red,
+                iconColor: Colors.red,
+                onTap: () => Navigator.pop(context, 'delete'),
+              ),
             ListTile(
-              leading:
-                  const Icon(Icons.delete_outline_rounded, color: Colors.red),
-              title: const Text('Excluir publicacao'),
-              textColor: Colors.red,
-              iconColor: Colors.red,
-              onTap: () => Navigator.pop(context, 'delete'),
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Denunciar publicacao'),
+              onTap: () => Navigator.pop(context, 'report'),
             ),
           ],
         ),
@@ -302,7 +315,38 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
     if (result == 'delete' && mounted) {
       await _confirmDeletePost(post);
+      return;
     }
+
+    if (result == 'report' && mounted) {
+      await _ensureLoggedInAsync(() async {
+        final currentUser = context.read<UserProvider>().user;
+        final sent = await _reportService.showReportDialog(
+          context: context,
+          user: currentUser,
+          targetType: 'community_post',
+          targetId: post.id,
+          targetTitle: post.content,
+          targetOwnerId: post.authorId,
+        );
+        if (!mounted || !sent) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Denuncia enviada ao suporte.')),
+        );
+      });
+    }
+  }
+
+  Future<void> _ensureLoggedInAsync(Future<void> Function() action) async {
+    final user = context.read<UserProvider>().user;
+    if (user == null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      );
+      return;
+    }
+    await action();
   }
 
   void _openImageViewer(String imageUrl) {
@@ -465,7 +509,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                         ),
                       ),
                       onMoreTap: () => _showPostActions(context, post, user),
-                      canShowMore: _canDeletePost(post, user),
+                      canShowMore: true,
                       onImageTap: (post.imageUrl?.trim().isNotEmpty ?? false)
                           ? () => _openImageViewer(post.imageUrl!)
                           : null,

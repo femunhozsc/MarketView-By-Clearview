@@ -347,13 +347,7 @@ class _AllRecommendedScreenState extends State<AllRecommendedScreen> {
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
                       sliver: SliverGrid(
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 6,
-                          crossAxisSpacing: 6,
-                          mainAxisExtent: 236,
-                        ),
+                        gridDelegate: AdCard.gridDelegate(context),
                         delegate: SliverChildBuilderDelegate(
                           (context, i) {
                             final ad = visibleAds[i];
@@ -813,19 +807,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
   }
 
   SliverGridDelegate _gridDelegate(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final crossAxisCount = width >= 900
-        ? 4
-        : width >= 680
-            ? 3
-            : 2;
-
-    return SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      mainAxisSpacing: 6,
-      crossAxisSpacing: 6,
-      mainAxisExtent: 236,
-    );
+    return AdCard.gridDelegate(context);
   }
 
   void _navigateToAd(AdModel ad) {

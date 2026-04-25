@@ -370,10 +370,10 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                 leading: CircleAvatar(
                   backgroundColor:
                       AppTheme.facebookBlue.withValues(alpha: 0.12),
-                  backgroundImage: store.logo != null &&
-                          store.logo!.trim().isNotEmpty
-                      ? NetworkImage(store.logo!)
-                      : null,
+                  backgroundImage:
+                      store.logo != null && store.logo!.trim().isNotEmpty
+                          ? NetworkImage(store.logo!)
+                          : null,
                   child: store.logo == null || store.logo!.trim().isEmpty
                       ? const Icon(
                           Icons.storefront_rounded,
@@ -946,19 +946,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   }
 
   SliverGridDelegate _gridDelegate(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final crossAxisCount = width >= 980
-        ? 4
-        : width >= 720
-            ? 3
-            : 2;
-
-    return SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      crossAxisSpacing: 6,
-      mainAxisSpacing: 6,
-      mainAxisExtent: 236,
-    );
+    return AdCard.gridDelegate(context);
   }
 
   Future<void> _openLocationPicker() async {

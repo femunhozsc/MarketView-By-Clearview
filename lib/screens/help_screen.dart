@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_provider.dart';
+import '../services/external_links_service.dart';
 import '../theme/app_theme.dart';
+import 'support_history_screen.dart';
 
 class HelpScreen extends StatefulWidget {
   const HelpScreen({super.key});
@@ -11,6 +15,7 @@ class HelpScreen extends StatefulWidget {
 }
 
 class _HelpScreenState extends State<HelpScreen> {
+  final _externalLinks = ExternalLinksService();
   final List<_FaqItem> _faqs = [
     _FaqItem(
       question: 'Como criar um anúncio?',
@@ -80,7 +85,8 @@ class _HelpScreenState extends State<HelpScreen> {
         ),
         title: Text(
           'Ajuda e suporte',
-          style: GoogleFonts.roboto(color: textColor, fontSize: 20, fontWeight: FontWeight.w800),
+          style: GoogleFonts.roboto(
+              color: textColor, fontSize: 20, fontWeight: FontWeight.w800),
         ),
       ),
       body: ListView(
@@ -110,18 +116,23 @@ class _HelpScreenState extends State<HelpScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.support_agent_rounded, color: Colors.white, size: 36),
+                const Icon(Icons.support_agent_rounded,
+                    color: Colors.white, size: 36),
                 const SizedBox(height: 10),
                 Text(
                   'Precisa de ajuda?',
                   style: GoogleFonts.roboto(
-                    color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Nossa equipe está disponível para ajudar você com qualquer dúvida ou problema.',
                   style: GoogleFonts.roboto(
-                    color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.5),
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 13,
+                      height: 1.5),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -129,13 +140,13 @@ class _HelpScreenState extends State<HelpScreen> {
                     _contactBtn(
                       icon: Icons.email_outlined,
                       label: 'E-mail',
-                      onTap: () {},
+                      onTap: () => _externalLinks.composeSupportEmail(),
                     ),
                     const SizedBox(width: 10),
                     _contactBtn(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      label: 'WhatsApp',
-                      onTap: () {},
+                      icon: Icons.support_agent_rounded,
+                      label: 'Chat',
+                      onTap: _openSupportChat,
                     ),
                   ],
                 ),
@@ -169,7 +180,8 @@ class _HelpScreenState extends State<HelpScreen> {
                 final isLast = e.key == _faqs.length - 1;
                 return Column(
                   children: [
-                    _FaqTile(item: e.value, isDark: isDark, textColor: textColor),
+                    _FaqTile(
+                        item: e.value, isDark: isDark, textColor: textColor),
                     if (!isLast)
                       Divider(
                         height: 1,
@@ -242,6 +254,21 @@ class _HelpScreenState extends State<HelpScreen> {
     );
   }
 
+  void _openSupportChat() {
+    final user = context.read<UserProvider>().user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Faca login para falar com o suporte.')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SupportHistoryScreen()),
+    );
+  }
+
   Widget _contactBtn({
     required IconData icon,
     required String label,
@@ -260,7 +287,11 @@ class _HelpScreenState extends State<HelpScreen> {
           children: [
             Icon(icon, color: Colors.white, size: 18),
             const SizedBox(width: 8),
-            Text(label, style: GoogleFonts.roboto(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            Text(label,
+                style: GoogleFonts.roboto(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -282,7 +313,8 @@ class _HelpScreenState extends State<HelpScreen> {
         child: Row(
           children: [
             Container(
-              width: 36, height: 36,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 color: iconColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
@@ -291,10 +323,14 @@ class _HelpScreenState extends State<HelpScreen> {
             ),
             const SizedBox(width: 14),
             Expanded(
-              child: Text(label, style: GoogleFonts.roboto(
-                  color: textColor, fontSize: 14, fontWeight: FontWeight.w500)),
+              child: Text(label,
+                  style: GoogleFonts.roboto(
+                      color: textColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500)),
             ),
-            Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 20),
+            Icon(Icons.chevron_right_rounded,
+                color: Colors.grey.shade400, size: 20),
           ],
         ),
       ),
@@ -312,7 +348,8 @@ class _FaqTile extends StatefulWidget {
   final _FaqItem item;
   final bool isDark;
   final Color textColor;
-  const _FaqTile({required this.item, required this.isDark, required this.textColor});
+  const _FaqTile(
+      {required this.item, required this.isDark, required this.textColor});
 
   @override
   State<_FaqTile> createState() => _FaqTileState();
@@ -362,13 +399,16 @@ class _FaqTileState extends State<_FaqTile> {
             child: Text(
               widget.item.answer,
               style: GoogleFonts.roboto(
-                color: widget.isDark ? AppTheme.whiteSecondary : Colors.grey.shade600,
+                color: widget.isDark
+                    ? AppTheme.whiteSecondary
+                    : Colors.grey.shade600,
                 fontSize: 13,
                 height: 1.6,
               ),
             ),
           ),
-          crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          crossFadeState:
+              _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
           duration: const Duration(milliseconds: 250),
         ),
       ],

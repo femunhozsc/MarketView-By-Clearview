@@ -46,13 +46,8 @@ class _RecentlyViewedScreenState extends State<RecentlyViewedScreen> {
           ? const Center(
               child: CircularProgressIndicator(color: AppTheme.facebookBlue))
           : GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                mainAxisExtent: 304,
-              ),
+              padding: EdgeInsets.zero,
+              gridDelegate: AdCard.gridDelegate(context),
               itemCount: _ads.length,
               itemBuilder: (context, index) => AdCard(
                 ad: _ads[index],

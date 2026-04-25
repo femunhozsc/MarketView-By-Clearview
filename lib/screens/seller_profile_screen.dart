@@ -193,19 +193,7 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
   }
 
   SliverGridDelegate _adsGridDelegate(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final crossAxisCount = width >= 980
-        ? 4
-        : width >= 720
-            ? 3
-            : 2;
-
-    return SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      crossAxisSpacing: 0,
-      mainAxisSpacing: 0,
-      mainAxisExtent: 246,
-    );
+    return AdCard.gridDelegate(context);
   }
 
   @override

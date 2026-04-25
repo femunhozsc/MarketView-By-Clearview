@@ -8,6 +8,7 @@ import '../models/store_model.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/ad_card.dart';
 import '../widgets/store_list_card.dart';
 import 'ad_detail_screen.dart';
 import 'seller_profile_screen.dart';
@@ -166,7 +167,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   Widget _buildAdsTab(bool isDark, Color textColor) {
     final cardBg = isDark ? AppTheme.blackCard : Colors.white;
     final border = isDark ? AppTheme.blackBorder : const Color(0xFFE8E8E8);
-    final mutedColor = isDark ? AppTheme.whiteMuted : Colors.grey.shade500;
 
     if (_ads.isEmpty) {
       return _buildEmpty(
@@ -181,13 +181,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       onRefresh: _loadFavorites,
       color: AppTheme.facebookBlue,
       child: GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.72,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-        ),
+        padding: EdgeInsets.zero,
+        gridDelegate: AdCard.gridDelegate(context),
         itemCount: _ads.length,
         itemBuilder: (_, i) {
           final ad = _ads[i];
@@ -197,7 +192,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             cardBg: cardBg,
             border: border,
             textColor: textColor,
-            mutedColor: mutedColor,
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => AdDetailScreen(ad: ad)),
@@ -366,7 +360,6 @@ class _FavCard extends StatelessWidget {
     required this.cardBg,
     required this.border,
     required this.textColor,
-    required this.mutedColor,
     required this.onTap,
     required this.onRemove,
   });
@@ -376,7 +369,6 @@ class _FavCard extends StatelessWidget {
   final Color cardBg;
   final Color border;
   final Color textColor;
-  final Color mutedColor;
   final VoidCallback onTap;
   final VoidCallback onRemove;
 
@@ -387,62 +379,58 @@ class _FavCard extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: cardBg,
-          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: border),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
+        clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
+            AspectRatio(
+              aspectRatio: 1.06,
               child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(14),
-                    ),
-                    child: Container(
-                      width: double.infinity,
-                      color: isDark
-                          ? AppTheme.blackLight
-                          : const Color(0xFFF0F2F5),
-                      child: ad.images.isNotEmpty
-                          ? Image.network(
-                              ad.images.first,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _placeholder(),
-                            )
-                          : _placeholder(),
-                    ),
+                  ColoredBox(
+                    color:
+                        isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
+                    child: ad.images.isNotEmpty
+                        ? Image.network(
+                            ad.images.first,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _placeholder(),
+                          )
+                        : _placeholder(),
                   ),
                   Positioned(
-                    top: 8,
-                    right: 8,
+                    top: 6,
+                    right: 6,
                     child: GestureDetector(
                       onTap: onRemove,
                       child: Container(
-                        width: 32,
-                        height: 32,
+                        width: 30,
+                        height: 30,
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: isDark
+                              ? AppTheme.blackLight
+                              : Colors.white.withValues(alpha: 0.97),
                           shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : const Color(0xFFD7DEE8),
+                          ),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withValues(alpha: 0.12),
-                              blurRadius: 6,
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
                             ),
                           ],
                         ),
                         child: const Icon(
                           Icons.favorite_rounded,
                           color: Colors.red,
-                          size: 18,
+                          size: 16,
                         ),
                       ),
                     ),
@@ -450,49 +438,37 @@ class _FavCard extends StatelessWidget {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    ad.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.roboto(
-                      color: textColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    ad.displayPriceLabel,
-                    style: GoogleFonts.roboto(
-                      color: AppTheme.facebookBlue,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Icon(Icons.location_on_outlined,
-                          color: mutedColor, size: 11),
-                      const SizedBox(width: 2),
-                      Expanded(
-                        child: Text(
-                          ad.location,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.roboto(
-                            color: mutedColor,
-                            fontSize: 11,
-                          ),
-                        ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      ad.displayPriceLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.roboto(
+                        color: textColor,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      ad.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.roboto(
+                        color: textColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        height: 1.05,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],

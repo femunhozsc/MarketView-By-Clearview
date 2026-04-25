@@ -11,6 +11,7 @@ import '../models/user_model.dart';
 import '../providers/user_provider.dart';
 import '../services/cloudinary_service.dart';
 import '../services/firestore_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'create_store_screen.dart';
 
@@ -32,6 +33,7 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
   final _formKey = GlobalKey<FormState>();
   final _firestore = FirestoreService();
   final _cloudinary = CloudinaryService();
+  final _storage = StorageService();
 
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descriptionCtrl;
@@ -123,10 +125,17 @@ class _EditStoreScreenState extends State<EditStoreScreen> {
       return cloudinaryUrl;
     }
 
+    final firebaseUrl = isLogo
+        ? await _storage.uploadStoreLogo(widget.store.id, file)
+        : await _storage.uploadStoreBanner(widget.store.id, file);
+    if (firebaseUrl != null && firebaseUrl.trim().isNotEmpty) {
+      return firebaseUrl;
+    }
+
     throw Exception(
       isLogo
-          ? 'Nao foi possivel enviar a logomarca para o Cloudinary.'
-          : 'Nao foi possivel enviar o banner para o Cloudinary.',
+          ? 'Nao foi possivel enviar a logomarca.'
+          : 'Nao foi possivel enviar o banner.',
     );
   }
 

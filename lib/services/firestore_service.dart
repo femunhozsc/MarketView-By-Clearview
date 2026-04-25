@@ -1,11 +1,36 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 import '../models/community_post_model.dart';
 import '../models/user_model.dart';
 import '../models/store_model.dart';
 import '../models/ad_model.dart';
 import 'cloudinary_service.dart';
 import 'storage_service.dart';
+
+class AdPriceSuggestion {
+  const AdPriceSuggestion({
+    required this.idealPrice,
+    required this.minPrice,
+    required this.maxPrice,
+    required this.sampleSize,
+    required this.confidence,
+    required this.usedLocalMatches,
+    this.sourceLabel = 'MarketView',
+    this.note,
+  });
+
+  final double idealPrice;
+  final double minPrice;
+  final double maxPrice;
+  final int sampleSize;
+  final String confidence;
+  final bool usedLocalMatches;
+  final String sourceLabel;
+  final String? note;
+
+  bool get hasEnoughData => sampleSize >= 3;
+}
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -1270,6 +1295,277 @@ class FirestoreService {
       }
     }
   }
+
+  Future<AdPriceSuggestion?> suggestAdPrice({
+    required String title,
+    required String type,
+    required String category,
+    String? categoryType,
+    String? location,
+    double? lat,
+    double? lng,
+    String? servicePriceType,
+    String? propertyOfferType,
+    List<AdAttribute> customAttributes = const [],
+    int? vehicleYear,
+    int? km,
+    double? propertyArea,
+    int? propertyBedrooms,
+    int limit = 120,
+  }) async {
+    final ads = await getAds(
+      type: type,
+      intent: AdModel.intentSell,
+      category: category,
+      limit: limit,
+    );
+    if (ads.isEmpty) return null;
+
+    final titleTokens = _priceSuggestionTokens(title);
+    final normalizedCategoryType = AdModel.normalizeValue(categoryType ?? '');
+    final normalizedLocation = AdModel.normalizeValue(location ?? '');
+    final wantedAttributes = {
+      for (final attribute in customAttributes)
+        AdModel.normalizeValue(attribute.key): AdModel.normalizeValue(attribute.value),
+    };
+    final scored = <({AdModel ad, int score})>[];
+
+    for (final ad in ads) {
+      if (ad.price <= 0) continue;
+      if (ad.id.trim().isEmpty) continue;
+      if (ad.type != type || ad.category != category) continue;
+      if (servicePriceType != null &&
+          ad.type == AdModel.serviceType &&
+          ad.servicePriceType != servicePriceType) {
+        continue;
+      }
+      if (propertyOfferType != null &&
+          AdModel.normalizeValue(category) == 'imoveis' &&
+          ad.propertyOfferType != propertyOfferType) {
+        continue;
+      }
+
+      var score = 0;
+      final adCategoryType = AdModel.normalizeValue(ad.categoryType ?? '');
+      if (normalizedCategoryType.isNotEmpty &&
+          adCategoryType == normalizedCategoryType) {
+        score += 42;
+      }
+
+      final adLocation = AdModel.normalizeValue(ad.location);
+      if (normalizedLocation.isNotEmpty && adLocation.isNotEmpty) {
+        final requestedParts = normalizedLocation
+            .split(',')
+            .map((part) => part.trim())
+            .where((part) => part.isNotEmpty)
+            .toList();
+        if (requestedParts.isNotEmpty && adLocation.contains(requestedParts[0])) {
+          score += 18;
+        }
+        if (requestedParts.length > 1 && adLocation.contains(requestedParts[1])) {
+          score += 8;
+        }
+      }
+
+      if (lat != null && lng != null && ad.lat != null && ad.lng != null) {
+        final distanceKm = _distanceInKm(
+          lat,
+          lng,
+          ad.lat!,
+          ad.lng!,
+        );
+        if (distanceKm <= 15) {
+          score += 24;
+        } else if (distanceKm <= 40) {
+          score += 14;
+        } else if (distanceKm <= 80) {
+          score += 6;
+        }
+      }
+
+      final adTokens = _priceSuggestionTokens(ad.title);
+      final overlap = titleTokens.intersection(adTokens).length;
+      score += overlap * 10;
+      if (titleTokens.isNotEmpty && overlap == titleTokens.length) {
+        score += 12;
+      }
+
+      if (wantedAttributes.isNotEmpty && ad.customAttributes.isNotEmpty) {
+        final adAttributes = {
+          for (final attribute in ad.customAttributes)
+            AdModel.normalizeValue(attribute.key):
+                AdModel.normalizeValue(attribute.value),
+        };
+        for (final entry in wantedAttributes.entries) {
+          final adValue = adAttributes[entry.key];
+          if (adValue == null || adValue.isEmpty) continue;
+          if (adValue == entry.value) {
+            score += 20;
+            continue;
+          }
+          final wantedTokens = _priceSuggestionTokens(entry.value);
+          final adValueTokens = _priceSuggestionTokens(adValue);
+          score += wantedTokens.intersection(adValueTokens).length * 8;
+        }
+      }
+
+      if (vehicleYear != null && ad.vehicleYear != null) {
+        final delta = (vehicleYear - ad.vehicleYear!).abs();
+        if (delta == 0) {
+          score += 26;
+        } else if (delta == 1) {
+          score += 12;
+        }
+      }
+
+      if (km != null && ad.km != null) {
+        final delta = (km - ad.km!).abs();
+        if (delta <= 10000) {
+          score += 16;
+        } else if (delta <= 30000) {
+          score += 8;
+        }
+      }
+
+      if (propertyArea != null && ad.propertyArea != null) {
+        final delta = (propertyArea - ad.propertyArea!).abs();
+        if (delta <= 10) {
+          score += 14;
+        } else if (delta <= 25) {
+          score += 7;
+        }
+      }
+
+      if (propertyBedrooms != null && ad.propertyBedrooms != null) {
+        if (propertyBedrooms == ad.propertyBedrooms) {
+          score += 14;
+        }
+      }
+
+      if (score >= 18) {
+        scored.add((ad: ad, score: score));
+      }
+    }
+
+    final chosen = scored.isNotEmpty
+        ? (scored..sort((a, b) => b.score.compareTo(a.score)))
+            .take(50)
+            .map((item) => item.ad)
+            .toList()
+        : ads
+            .where((ad) {
+              final sameCategoryType = normalizedCategoryType.isEmpty ||
+                  AdModel.normalizeValue(ad.categoryType ?? '') ==
+                      normalizedCategoryType;
+              return ad.price > 0 && sameCategoryType;
+            })
+            .take(50)
+            .toList();
+
+    final prices = chosen.map((ad) => ad.price).where((price) => price > 0).toList()
+      ..sort();
+    if (prices.length < 2) return null;
+
+    final median = _percentile(prices, 0.5);
+    var cleanPrices = prices;
+    if (prices.length >= 5) {
+      cleanPrices = prices
+          .where((price) => price >= median * 0.35 && price <= median * 2.8)
+          .toList();
+    }
+    if (cleanPrices.length < 2) cleanPrices = prices;
+
+    final low = _percentile(cleanPrices, 0.25);
+    final ideal = _percentile(cleanPrices, 0.5);
+    final high = _percentile(cleanPrices, 0.75);
+    final spread = math.max(ideal * 0.12, (high - low).abs() * 0.55);
+    final minPrice = math.max(1, math.min(low, ideal - spread));
+    final maxPrice = math.max(ideal + 1, math.max(high, ideal + spread));
+    final sampleSize = cleanPrices.length;
+
+    return AdPriceSuggestion(
+      idealPrice: _roundSuggestedPrice(ideal),
+      minPrice: _roundSuggestedPrice(minPrice.toDouble()),
+      maxPrice: _roundSuggestedPrice(maxPrice.toDouble()),
+      sampleSize: sampleSize,
+      confidence: sampleSize >= 8
+          ? 'boa'
+          : sampleSize >= 4
+              ? 'media'
+              : 'baixa',
+      usedLocalMatches: scored.isNotEmpty,
+      sourceLabel: scored.isNotEmpty ? 'MarketView' : 'MarketView',
+      note: scored.isNotEmpty
+          ? 'Baseado em anuncios parecidos do MarketView'
+          : 'Baseado na media da categoria dentro do MarketView',
+    );
+  }
+
+  Set<String> _priceSuggestionTokens(String value) {
+    const ignored = {
+      'de',
+      'da',
+      'do',
+      'das',
+      'dos',
+      'com',
+      'para',
+      'por',
+      'um',
+      'uma',
+      'novo',
+      'nova',
+      'usado',
+      'usada',
+      'seminovo',
+      'seminova',
+    };
+    return AdModel.normalizeValue(value)
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+        .split(RegExp(r'\s+'))
+        .map((token) => token.trim())
+        .where((token) => token.length >= 2 && !ignored.contains(token))
+        .toSet();
+  }
+
+  double _percentile(List<double> sortedValues, double percentile) {
+    if (sortedValues.isEmpty) return 0;
+    if (sortedValues.length == 1) return sortedValues.first;
+    final index = (sortedValues.length - 1) * percentile;
+    final lower = index.floor();
+    final upper = index.ceil();
+    if (lower == upper) return sortedValues[lower];
+    final ratio = index - lower;
+    return sortedValues[lower] +
+        (sortedValues[upper] - sortedValues[lower]) * ratio;
+  }
+
+  double _roundSuggestedPrice(double value) {
+    if (value < 100) return (value / 5).round() * 5;
+    if (value < 1000) return (value / 10).round() * 10;
+    if (value < 10000) return (value / 50).round() * 50;
+    return (value / 100).round() * 100;
+  }
+
+  double _distanceInKm(
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) {
+    const earthRadiusKm = 6371.0;
+    final dLat = _toRadians(endLat - startLat);
+    final dLng = _toRadians(endLng - startLng);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(startLat)) *
+            math.cos(_toRadians(endLat)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  double _toRadians(double degrees) => degrees * math.pi / 180;
 
   Future<List<AdModel>> getAdsByCategory(
     String category, {

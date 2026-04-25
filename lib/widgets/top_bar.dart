@@ -49,39 +49,10 @@ class MarketViewTopBar extends StatelessWidget implements PreferredSizeWidget {
           ),
           child: Row(
             children: [
-              InkWell(
+              MarketViewLogo(
                 onTap: onLogoTap,
-                borderRadius: BorderRadius.circular(14),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  child: RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: 'Market',
-                          style: GoogleFonts.montserrat(
-                            color: marketColor,
-                            fontSize: 23,
-                            fontWeight: FontWeight.w800,
-                            height: 1,
-                            letterSpacing: -0.9,
-                          ),
-                        ),
-                        TextSpan(
-                          text: 'View',
-                          style: GoogleFonts.montserrat(
-                            color: viewColor,
-                            fontSize: 23,
-                            fontWeight: FontWeight.w800,
-                            height: 1,
-                            letterSpacing: -0.9,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                marketColor: marketColor,
+                viewColor: viewColor,
               ),
               const Spacer(),
               _CircleIconButton(
@@ -98,6 +69,62 @@ class MarketViewTopBar extends StatelessWidget implements PreferredSizeWidget {
                 background:
                     isDark ? AppTheme.blackLight : const Color(0xFFF0F2F5),
                 color: iconColor,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class MarketViewLogo extends StatelessWidget {
+  final VoidCallback onTap;
+  final Color marketColor;
+  final Color? viewColor;
+  final double fontSize;
+
+  const MarketViewLogo({
+    super.key,
+    required this.onTap,
+    this.marketColor = const Color(0xFF0066EE),
+    this.viewColor,
+    this.fontSize = 23,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final resolvedViewColor =
+        viewColor ?? (isDark ? Colors.white : const Color(0xFF303030));
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(
+                text: 'Market',
+                style: GoogleFonts.montserrat(
+                  color: marketColor,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                  letterSpacing: -0.9,
+                ),
+              ),
+              TextSpan(
+                text: 'View',
+                style: GoogleFonts.montserrat(
+                  color: resolvedViewColor,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                  letterSpacing: -0.9,
+                ),
               ),
             ],
           ),

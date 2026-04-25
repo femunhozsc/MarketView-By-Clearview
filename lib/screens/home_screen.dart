@@ -30,6 +30,7 @@ import 'my_stores_screen.dart';
 import 'search_results_screen.dart';
 import 'settings_screen.dart';
 import 'stores_screen.dart';
+import 'support_history_screen.dart';
 import '../services/firestore_service.dart';
 import '../services/auth_service.dart';
 import '../providers/user_provider.dart';
@@ -69,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen>
   static const int _sectionCount = 8;
   static const double _pillSectionsHeight = 69;
   static const double _marketplaceActionsHeight = 60;
+  static const double _bottomNavHeight = 75;
   static const List<String> _sellerStrengthOptions = [
     'Atencioso',
     'Comunicacao rapida',
@@ -96,6 +98,7 @@ class _HomeScreenState extends State<HomeScreen>
   double _searchLng = _campoMouraoLng;
   int _searchRadiusKm = 50;
   final ValueNotifier<double> _marketplaceChromeOffset = ValueNotifier(0);
+  final ValueNotifier<double> _bottomNavOffset = ValueNotifier(0);
 
   late AnimationController _drawerCtrl;
   late Animation<double> _drawerAnim;
@@ -124,6 +127,7 @@ class _HomeScreenState extends State<HomeScreen>
     _sectionsPageController.dispose();
     _searchController.dispose();
     _marketplaceChromeOffset.dispose();
+    _bottomNavOffset.dispose();
     super.dispose();
   }
 
@@ -231,6 +235,7 @@ class _HomeScreenState extends State<HomeScreen>
       _isLoadingUserSearch = false;
       _searchController.clear();
       _marketplaceChromeOffset.value = 0;
+      _bottomNavOffset.value = 0;
     });
   }
 
@@ -464,6 +469,7 @@ class _HomeScreenState extends State<HomeScreen>
   }) {
     final nextIndex = index.clamp(0, _sectionCount - 1).toInt();
     _marketplaceChromeOffset.value = 0;
+    _bottomNavOffset.value = 0;
     if (_selectedSection != nextIndex) {
       setState(() => _selectedSection = nextIndex);
     }
@@ -501,24 +507,44 @@ class _HomeScreenState extends State<HomeScreen>
       if (_marketplaceChromeOffset.value != 0) {
         _marketplaceChromeOffset.value = 0;
       }
+      if (_bottomNavOffset.value != 0) {
+        _bottomNavOffset.value = 0;
+      }
       return false;
     }
 
     if (notification is ScrollUpdateNotification &&
         notification.scrollDelta != null) {
+      final scrollDelta = notification.scrollDelta!;
       final nextOffset =
-          (_marketplaceChromeOffset.value + notification.scrollDelta!)
-              .clamp(0.0, maxOffset);
+          (_marketplaceChromeOffset.value + scrollDelta).clamp(0.0, maxOffset);
       if ((nextOffset - _marketplaceChromeOffset.value).abs() > 1) {
         _marketplaceChromeOffset.value = nextOffset;
       }
-    } else if (notification is ScrollEndNotification &&
-        _marketplaceChromeOffset.value > 0 &&
-        _marketplaceChromeOffset.value < maxOffset) {
-      final targetOffset =
-          _marketplaceChromeOffset.value > (maxOffset / 2) ? maxOffset : 0.0;
-      if ((targetOffset - _marketplaceChromeOffset.value).abs() > 1) {
-        _marketplaceChromeOffset.value = targetOffset;
+
+      final nextBottomOffset =
+          (_bottomNavOffset.value + scrollDelta).clamp(0.0, _bottomNavHeight);
+      if ((nextBottomOffset - _bottomNavOffset.value).abs() > 1) {
+        _bottomNavOffset.value = nextBottomOffset;
+      }
+    } else if (notification is ScrollEndNotification) {
+      if (_marketplaceChromeOffset.value > 0 &&
+          _marketplaceChromeOffset.value < maxOffset) {
+        final targetOffset =
+            _marketplaceChromeOffset.value > (maxOffset / 2) ? maxOffset : 0.0;
+        if ((targetOffset - _marketplaceChromeOffset.value).abs() > 1) {
+          _marketplaceChromeOffset.value = targetOffset;
+        }
+      }
+
+      if (_bottomNavOffset.value > 0 &&
+          _bottomNavOffset.value < _bottomNavHeight) {
+        final targetOffset = _bottomNavOffset.value > (_bottomNavHeight / 2)
+            ? _bottomNavHeight
+            : 0.0;
+        if ((targetOffset - _bottomNavOffset.value).abs() > 1) {
+          _bottomNavOffset.value = targetOffset;
+        }
       }
     }
 
@@ -1457,19 +1483,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   SliverGridDelegate _marketplaceGridDelegate(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final crossAxisCount = width >= 980
-        ? 4
-        : width >= 720
-            ? 3
-            : 2;
-
-    return SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      crossAxisSpacing: 6,
-      mainAxisSpacing: 6,
-      mainAxisExtent: 236,
-    );
+    return AdCard.gridDelegate(context);
   }
 
   // â”€â”€ Navega para tela de acordo com Ã­ndice da barra inferior
@@ -1694,7 +1708,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
-        bottomNavigationBar: _buildBottomNav(isDark),
+        bottomNavigationBar: _buildHideableBottomNav(isDark),
       ),
     );
   }
@@ -3480,6 +3494,13 @@ class _HomeScreenState extends State<HomeScreen>
                   onTap: () => _handleAuthRequired(
                       () => setState(() => _selectedNavIndex = 3))),
               _drawerItem(
+                  Icons.support_agent_rounded, 'Suporte', textColor, subColor,
+                  onTap: () => _handleAuthRequired(() => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const SupportHistoryScreen()),
+                      ))),
+              _drawerItem(
                   Icons.settings_outlined, 'Configurações', textColor, subColor,
                   onTap: () => _handleAuthRequired(() => Navigator.push(
                         context,
@@ -3607,6 +3628,35 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // â”€â”€ Bottom Nav â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Widget _buildHideableBottomNav(bool isDark) {
+    if (_isSearching) return _buildBottomNav(isDark);
+
+    return ValueListenableBuilder<double>(
+      valueListenable: _bottomNavOffset,
+      builder: (context, bottomOffsetValue, child) {
+        final bottomOffset = bottomOffsetValue.clamp(0.0, _bottomNavHeight);
+        final visibleHeight =
+            (_bottomNavHeight - bottomOffset).clamp(0.0, _bottomNavHeight);
+
+        return ClipRect(
+          child: SizedBox(
+            height: visibleHeight,
+            child: OverflowBox(
+              alignment: Alignment.topCenter,
+              minHeight: _bottomNavHeight,
+              maxHeight: _bottomNavHeight,
+              child: Transform.translate(
+                offset: Offset(0, bottomOffset),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+      child: _buildBottomNav(isDark),
+    );
+  }
+
   Widget _buildBottomNav(bool isDark) {
     final bg = isDark ? AppTheme.blackCard : Colors.white;
     final border = isDark ? AppTheme.blackBorder : const Color(0xFFE0E0E0);

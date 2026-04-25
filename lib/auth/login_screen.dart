@@ -25,12 +25,11 @@ class _LoginScreenState extends State<LoginScreen> {
   final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####');
 
   bool _isLoading = false;
-  bool _isSendingCode = false;
+  final bool _isSendingCode = false;
   bool _isVerifyingCode = false;
   bool _showPass = false;
   int _selectedMode = 0;
   String? _verificationId;
-  int? _resendToken;
 
   @override
   void dispose() {

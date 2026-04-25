@@ -55,6 +55,7 @@ class AdModel {
   final String? vehicleBrand;
   final String? vehicleModel;
   final int? vehicleYear;
+  final String? vehicleEngine;
   final List<String> vehicleOptionals;
   final String? vehicleColor;
   final String? vehicleFuelType;
@@ -69,6 +70,11 @@ class AdModel {
   final int? propertyParkingSpots;
   final String? propertyFurnishing;
   final List<AdAttribute> customAttributes;
+  final double? aiSuggestedPrice;
+  final double? aiSuggestedMinPrice;
+  final double? aiSuggestedMaxPrice;
+  final String? aiPriceConfidence;
+  final int? aiPriceSampleSize;
 
   AdModel({
     required this.id,
@@ -103,6 +109,7 @@ class AdModel {
     this.vehicleBrand,
     this.vehicleModel,
     this.vehicleYear,
+    this.vehicleEngine,
     this.vehicleOptionals = const [],
     this.vehicleColor,
     this.vehicleFuelType,
@@ -117,6 +124,11 @@ class AdModel {
     this.propertyParkingSpots,
     this.propertyFurnishing,
     this.customAttributes = const [],
+    this.aiSuggestedPrice,
+    this.aiSuggestedMinPrice,
+    this.aiSuggestedMaxPrice,
+    this.aiPriceConfidence,
+    this.aiPriceSampleSize,
   });
 
   bool get isStoreAd => storeId != null && storeId!.isNotEmpty;
@@ -135,6 +147,7 @@ class AdModel {
       ((vehicleBrand?.trim().isNotEmpty ?? false) ||
           (vehicleModel?.trim().isNotEmpty ?? false) ||
           vehicleYear != null ||
+          (vehicleEngine?.trim().isNotEmpty ?? false) ||
           km != null ||
           (vehicleOptionals.isNotEmpty) ||
           (vehicleColor?.trim().isNotEmpty ?? false) ||
@@ -156,7 +169,18 @@ class AdModel {
           propertyMonthlyCosts.isNotEmpty);
   bool get hasCustomAttributes => customAttributes.isNotEmpty;
 
-  String get displayTypeLabel => type == serviceType ? 'Serviço' : 'Produto';
+  String get displayTypeLabel {
+    if (isWantedAd) return type == serviceType ? 'Serviço' : 'Produto';
+
+    final normalizedCategory = normalizeValue(category);
+    if (normalizedCategory == 'veiculos') {
+      return 'Automóveis, peças e acessórios';
+    }
+    if (normalizedCategory == 'imoveis') return 'Imóveis';
+    if (normalizedCategory == 'vaga de emprego') return 'Vaga de emprego';
+    return type == serviceType ? 'Serviços' : 'Produtos';
+  }
+
   String get displayIntentLabel => isWantedAd ? 'Compro' : 'Vendo';
   String get displayCategoryLabel => displayLabel(category);
   String get displayCategoryTypeLabel {
@@ -244,6 +268,9 @@ class AdModel {
     }
     if (vehicleYear != null) {
       entries.add(MapEntry('Ano', vehicleYear.toString()));
+    }
+    if (vehicleEngine != null && vehicleEngine!.trim().isNotEmpty) {
+      entries.add(MapEntry('Motorização', vehicleEngine!.trim()));
     }
     if (vehicleColor != null && vehicleColor!.trim().isNotEmpty) {
       entries.add(MapEntry('Cor', vehicleColor!.trim()));
@@ -450,6 +477,7 @@ class AdModel {
       'vehicleBrand': vehicleBrand,
       'vehicleModel': vehicleModel,
       'vehicleYear': vehicleYear,
+      'vehicleEngine': vehicleEngine,
       'vehicleOptionals': vehicleOptionals,
       'vehicleColor': vehicleColor,
       'vehicleFuelType': vehicleFuelType,
@@ -465,6 +493,11 @@ class AdModel {
       'propertyParkingSpots': propertyParkingSpots,
       'propertyFurnishing': propertyFurnishing,
       'customAttributes': customAttributes.map((item) => item.toMap()).toList(),
+      'aiSuggestedPrice': aiSuggestedPrice,
+      'aiSuggestedMinPrice': aiSuggestedMinPrice,
+      'aiSuggestedMaxPrice': aiSuggestedMaxPrice,
+      'aiPriceConfidence': aiPriceConfidence,
+      'aiPriceSampleSize': aiPriceSampleSize,
     };
   }
 
@@ -502,6 +535,7 @@ class AdModel {
       vehicleBrand: map['vehicleBrand'],
       vehicleModel: map['vehicleModel'],
       vehicleYear: (map['vehicleYear'] as num?)?.toInt(),
+      vehicleEngine: map['vehicleEngine'],
       vehicleOptionals: List<String>.from(map['vehicleOptionals'] ?? const []),
       vehicleColor: map['vehicleColor'],
       vehicleFuelType: map['vehicleFuelType'],
@@ -527,6 +561,11 @@ class AdModel {
           .whereType<Map>()
           .map((item) => AdAttribute.fromMap(Map<String, dynamic>.from(item)))
           .toList(),
+      aiSuggestedPrice: (map['aiSuggestedPrice'] as num?)?.toDouble(),
+      aiSuggestedMinPrice: (map['aiSuggestedMinPrice'] as num?)?.toDouble(),
+      aiSuggestedMaxPrice: (map['aiSuggestedMaxPrice'] as num?)?.toDouble(),
+      aiPriceConfidence: map['aiPriceConfidence'],
+      aiPriceSampleSize: (map['aiPriceSampleSize'] as num?)?.toInt(),
     );
   }
 
@@ -563,6 +602,7 @@ class AdModel {
     String? vehicleBrand,
     String? vehicleModel,
     int? vehicleYear,
+    String? vehicleEngine,
     List<String>? vehicleOptionals,
     String? vehicleColor,
     String? vehicleFuelType,
@@ -577,6 +617,11 @@ class AdModel {
     int? propertyParkingSpots,
     String? propertyFurnishing,
     List<AdAttribute>? customAttributes,
+    double? aiSuggestedPrice,
+    double? aiSuggestedMinPrice,
+    double? aiSuggestedMaxPrice,
+    String? aiPriceConfidence,
+    int? aiPriceSampleSize,
   }) {
     return AdModel(
       id: id ?? this.id,
@@ -612,6 +657,7 @@ class AdModel {
       vehicleBrand: vehicleBrand ?? this.vehicleBrand,
       vehicleModel: vehicleModel ?? this.vehicleModel,
       vehicleYear: vehicleYear ?? this.vehicleYear,
+      vehicleEngine: vehicleEngine ?? this.vehicleEngine,
       vehicleOptionals: vehicleOptionals ?? this.vehicleOptionals,
       vehicleColor: vehicleColor ?? this.vehicleColor,
       vehicleFuelType: vehicleFuelType ?? this.vehicleFuelType,
@@ -626,6 +672,11 @@ class AdModel {
       propertyParkingSpots: propertyParkingSpots ?? this.propertyParkingSpots,
       propertyFurnishing: propertyFurnishing ?? this.propertyFurnishing,
       customAttributes: customAttributes ?? this.customAttributes,
+      aiSuggestedPrice: aiSuggestedPrice ?? this.aiSuggestedPrice,
+      aiSuggestedMinPrice: aiSuggestedMinPrice ?? this.aiSuggestedMinPrice,
+      aiSuggestedMaxPrice: aiSuggestedMaxPrice ?? this.aiSuggestedMaxPrice,
+      aiPriceConfidence: aiPriceConfidence ?? this.aiPriceConfidence,
+      aiPriceSampleSize: aiPriceSampleSize ?? this.aiPriceSampleSize,
     );
   }
 }

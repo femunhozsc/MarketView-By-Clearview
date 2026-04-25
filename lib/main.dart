@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
@@ -15,6 +18,7 @@ void main() async {
   final firebaseApp = await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  await _activateFirebaseAppCheck();
   final userProvider = UserProvider();
   await userProvider.initialize();
 
@@ -36,6 +40,39 @@ void main() async {
       ),
     ),
   );
+}
+
+Future<void> _activateFirebaseAppCheck() async {
+  const appCheckSiteKey = String.fromEnvironment('FIREBASE_APP_CHECK_SITE_KEY');
+
+  if (kIsWeb) {
+    if (appCheckSiteKey.isEmpty) return;
+    await FirebaseAppCheck.instance.activate(
+      webProvider: ReCaptchaV3Provider(appCheckSiteKey),
+    );
+    return;
+  }
+
+  switch (defaultTargetPlatform) {
+    case TargetPlatform.android:
+      await FirebaseAppCheck.instance.activate(
+        androidProvider:
+            kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+      );
+      return;
+    case TargetPlatform.iOS:
+    case TargetPlatform.macOS:
+      await FirebaseAppCheck.instance.activate(
+        appleProvider: kDebugMode
+            ? AppleProvider.debug
+            : AppleProvider.appAttestWithDeviceCheckFallback,
+      );
+      return;
+    case TargetPlatform.fuchsia:
+    case TargetPlatform.linux:
+    case TargetPlatform.windows:
+      return;
+  }
 }
 
 class MarketViewApp extends StatelessWidget {
@@ -70,39 +107,8 @@ class _AppBootstrap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InitialSplashGate(firebaseInitialization: firebaseInitialization);
-  }
-}
-
-class _InitialSplashGate extends StatefulWidget {
-  const _InitialSplashGate({required this.firebaseInitialization});
-
-  final Future<FirebaseApp> firebaseInitialization;
-
-  @override
-  State<_InitialSplashGate> createState() => _InitialSplashGateState();
-}
-
-class _InitialSplashGateState extends State<_InitialSplashGate> {
-  bool _showBrandSplash = true;
-
-  @override
-  void initState() {
-    super.initState();
-    Future.delayed(const Duration(milliseconds: 1400), () {
-      if (!mounted) return;
-      setState(() => _showBrandSplash = false);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_showBrandSplash) {
-      return const BrandSplashScreen();
-    }
-
     return FutureBuilder<FirebaseApp>(
-      future: widget.firebaseInitialization,
+      future: firebaseInitialization,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Material(

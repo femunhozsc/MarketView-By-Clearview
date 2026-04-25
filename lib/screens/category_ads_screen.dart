@@ -201,19 +201,7 @@ class _CategoryAdsScreenState extends State<CategoryAdsScreen> {
   }
 
   SliverGridDelegate _gridDelegate(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final crossAxisCount = width >= 900
-        ? 4
-        : width >= 680
-            ? 3
-            : 2;
-
-    return SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      mainAxisSpacing: 6,
-      crossAxisSpacing: 6,
-      mainAxisExtent: 236,
-    );
+    return AdCard.gridDelegate(context);
   }
 
   @override
